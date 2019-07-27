@@ -1,11 +1,11 @@
 #![feature(test)]
 extern crate test;
 use rayon::prelude::*;
-use rand::prelude::*;
-use superslice::*;
+use rand::{prelude::*, distributions::weighted::WeightedIndex};
 
-type Simdvec = packed_simd::f64x8;
-const LANES: usize = Simdvec::lanes();
+type Primitive = f64;
+const LANES: usize = 8;
+type Simdvec = packed_simd::Simd<[Primitive;LANES]>;
 
 #[repr(align(64))]
 struct FloatContainer {
@@ -14,24 +14,24 @@ struct FloatContainer {
 }
 impl Default for FloatContainer {
     fn default() -> Self {
-        Self { intern: [0.0f64;LANES] }
+        Self { intern: [0.0 as Primitive;LANES] }
     }
 }
 
 struct AlignedFloatVec;
 impl AlignedFloatVec {
-    pub fn new(size: usize) -> Vec<f64> {
+    pub fn new(size: usize) -> Vec<Primitive> {
         use std::mem;
         
         assert_eq!(size % LANES, 0);
         let mut allocation = Vec::<FloatContainer>::with_capacity(size / LANES);
         allocation.resize_with(allocation.capacity(), Default::default);
-        let ptr = allocation.as_mut_ptr() as *mut f64;
+        let ptr = allocation.as_mut_ptr() as *mut Primitive;
         
         mem::forget(allocation);
         
         let resvec = unsafe { Vec::from_raw_parts(ptr, size, size) };
-        unsafe { debug_assert_eq!((resvec.get_unchecked(0) as *const f64).align_offset(LANES * 8), 0); }
+        unsafe { debug_assert_eq!((resvec.get_unchecked(0) as *const Primitive).align_offset(LANES * std::mem::size_of::<Primitive>()), 0); }
         resvec
     }
 }
@@ -41,11 +41,11 @@ impl AlignedFloatVec {
 #[derive(Clone, Debug)]
 pub struct KMeanState {
     pub k: usize,
-    pub distsum: f64,
-    pub centroids: Vec<f64>,
+    pub distsum: Primitive,
+    pub centroids: Vec<Primitive>,
     pub centroid_frequency: Vec<usize>,
     pub assignments: Vec<usize>,
-    pub centroid_distances: Vec<f64>,
+    pub centroid_distances: Vec<Primitive>,
 
     sample_dims: usize,
 }
@@ -58,10 +58,10 @@ impl KMeanState {
             centroids: AlignedFloatVec::new(sample_dims * k),
             centroid_frequency: vec![0usize;k],
             assignments: vec![0usize;sample_cnt],
-            centroid_distances: vec![std::f64::INFINITY;sample_cnt]
+            centroid_distances: vec![std::f32::INFINITY as Primitive;sample_cnt]
         }
     }
-    pub fn set_centroid_from_iter(&mut self, idx: usize, src: impl Iterator<Item = f64>) {
+    pub fn set_centroid_from_iter(&mut self, idx: usize, src: impl Iterator<Item = Primitive>) {
         self.centroids.iter_mut().skip(self.sample_dims * idx).take(self.sample_dims)
                 .zip(src)
                 .for_each(|(c,s)| *c = s);
@@ -80,7 +80,7 @@ pub struct KMeans {
     sample_cnt: usize,
     sample_dims: usize,
     p_sample_dims: usize,
-    p_samples: Vec<f64>
+    p_samples: Vec<Primitive>
 }
 impl KMeans {
     fn multiple_roundup(val: usize, multiple_of: usize) -> usize {
@@ -91,7 +91,8 @@ impl KMeans {
         }
     }
 
-    pub fn new(samples: Vec<f64>, sample_cnt: usize, sample_dims: usize) -> Self {
+    pub fn new(samples: Vec<Primitive>, sample_cnt: usize, sample_dims: usize) -> Self {
+        assert!(samples.len() == sample_cnt * sample_dims);
         let p_sample_dims = KMeans::multiple_roundup(sample_dims, LANES);
        
         // Recopy into new, properly aligned + padded buffer
@@ -140,7 +141,7 @@ impl KMeans {
             });
     }
 
-    fn update_centroids(&self, state: &mut KMeanState) -> f64 {
+    fn update_centroids(&self, state: &mut KMeanState) -> Primitive {
         let chunks_per_sample = self.p_sample_dims / LANES;
         // Sum all samples in a cluster together into new_centroids
         // Count non-empty clusters
@@ -172,7 +173,7 @@ impl KMeans {
                     });
             });
             s.spawn(|_| {
-                new_distsum = centroid_distances.iter().sum::<f64>();
+                new_distsum = centroid_distances.iter().sum::<Primitive>();
             });
         });
 
@@ -226,7 +227,7 @@ impl KMeans {
             .zip(new_centroids.chunks_exact(self.p_sample_dims))
             .zip(state.centroid_frequency.iter().cloned())
             .for_each(|((c,nc),cfreq)| {
-                let cfreq = Simdvec::splat(cfreq as f64);
+                let cfreq = Simdvec::splat(cfreq as Primitive);
                 c.chunks_exact_mut(LANES)
                     .zip(nc.chunks_exact(LANES).map(|v| unsafe { Simdvec::from_slice_aligned_unchecked(v) }))
                     .for_each(|(c,nc)| unsafe {
@@ -241,7 +242,7 @@ impl KMeans {
         assert!(k <= self.sample_cnt);
 
         let mut state = KMeanState::new(self.sample_cnt, self.p_sample_dims, k);
-        state.distsum = std::f64::INFINITY;
+        state.distsum = std::f32::INFINITY as Primitive;
 
         // Initialize clusters
         init(&self, &mut state, rnd);
@@ -271,24 +272,18 @@ impl KMeans {
             
             //NOTE: following two calculations are not what Matlab lists on documentation, but what Matlab actually implemented...
             // Calculate sum of distances per centroid
-            let distsum = state.centroid_distances.iter().sum::<f64>();
+            let distsum = state.centroid_distances.iter().sum::<Primitive>();
 
             // Calculate probabilities for each of the samples, to be the new centroid
-            let mut centroid_probabilities: Vec<(usize, f64)> = state.centroid_distances.iter().enumerate()
-                                                    .map(|(i,d)| (i, d / distsum))
+            let centroid_probabilities: Vec<Primitive> = state.centroid_distances.iter()
+                                                    .cloned()
+                                                    .map(|d| d / distsum)
                                                     .collect();
-
-            // Calculate cumsum(), essentially giving items with a bigger probability a "bigger piece of the cake".
-            for i in 1..kmean.sample_cnt {
-                centroid_probabilities[i].1 += centroid_probabilities[i-1].1;
-            }
-            
-            // Select new centroid by taking random value (0..1) and binary_search in cumsum(centroid_probabilities)
-            // Items with a higher probability have a higher chance of being selected.
-            let rndnr: f64 = rnd.gen_range(0.0, 1.0);
-            let centroid_id = centroid_probabilities.upper_bound_by(|(_,p)| p.partial_cmp(&rndnr).unwrap());
+            // Use rand's WeightedIndex to randomly draw a centroid, while respecting their probabilities
+            let centroid_index = WeightedIndex::new(centroid_probabilities).unwrap();
+            let sampled_centroid_id = centroid_index.sample(rnd);
             state.set_centroid_from_iter(k,
-                kmean.p_samples.iter().skip(centroid_probabilities[centroid_id].0 * kmean.p_sample_dims).cloned());
+                kmean.p_samples.iter().skip(sampled_centroid_id * kmean.p_sample_dims).cloned());
         }
     }
 
@@ -347,7 +342,7 @@ mod tests {
         let sample_cnt = 1000;
         let k = 5;
 
-        let mut samples = vec![0.0f64;sample_cnt * sample_dims];
+        let mut samples = vec![0.0 as Primitive;sample_cnt * sample_dims];
         samples.iter_mut().for_each(|i| *i = rand::random());
 
         let kmean = KMeans::new(samples, sample_cnt, sample_dims);
@@ -367,7 +362,7 @@ mod tests {
                 let (best_idx, best_dist) = state.centroids
                     .chunks_exact(kmean.p_sample_dims)
                     .map(|c| {
-                        s.iter().zip(c.iter()).map(|(sv,cv)| sv - cv).map(|v| v * v).sum::<f64>()
+                        s.iter().zip(c.iter()).map(|(sv,cv)| sv - cv).map(|v| v * v).sum::<Primitive>()
                     })
                     .enumerate()
                     .min_by(|(_,d0), (_,d1)| d0.partial_cmp(d1).unwrap())
@@ -415,7 +410,7 @@ mod tests {
         let sample_dims = 2000;
         let k = 5;
 
-        let samples = vec![0.0f64;sample_cnt * sample_dims];
+        let samples = vec![0.0 as Primitive;sample_cnt * sample_dims];
         let kmean = KMeans::new(samples, sample_cnt, sample_dims);
 
         let mut state = KMeanState::new(kmean.sample_cnt, kmean.p_sample_dims, k);
@@ -436,7 +431,7 @@ mod tests {
 
     fn complete_benchmark(b: &mut Bencher, sample_cnt: usize, sample_dims: usize, max_iter: usize, k: usize) {
         let mut rnd = rand::rngs::StdRng::seed_from_u64(1337);
-        let mut samples = vec![0.0f64;sample_cnt * sample_dims];
+        let mut samples = vec![0.0 as Primitive;sample_cnt * sample_dims];
         samples.iter_mut().for_each(|v| *v = rnd.gen_range(0.0, 1.0));
         let kmean = KMeans::new(samples, sample_cnt, sample_dims);
         b.iter(|| {
