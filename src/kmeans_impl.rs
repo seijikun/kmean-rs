@@ -248,6 +248,7 @@ impl<T> KMeans<T> where T: Primitive, [T;LANES]: SimdArray, Simd<[T;LANES]>: Sim
     /// 
     /// ## Example
     /// ```rust
+    /// use kmeans::*;
     /// fn main() {
     ///     let (sample_cnt, sample_dims, k, max_iter) = (20000, 200, 4, 100);
     /// 
