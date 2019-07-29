@@ -1,12 +1,77 @@
 #![feature(test)]
-extern crate test;
 
+//! # kmeans - API documentation
+//!
+//! Kmeans is a small rust library for the calculation of k-means-clustering.
+//!
+//! ## Design target
+//! It's main target is high performance / throughput, you will therefore find
+//! most of its API-surface rather plain.
+//! An example of this is, that samples are given using a raw vector, instead of
+//! any high-level arithmetics / matrix crate such as nalgebra or ndarray.
+//! For this same reason, the crate is internally using hand-written SIMD operations
+//! and (unfortunately) quite a bit of unsafe code, which proved to lead to insane speedups.
+//!
+//! ## Supported variants
+//! K-Means clustering is not one algorithm, but more like a concept describing the outcome.
+//! There are differing implementations and variants using differing levels of approximations.
+//! For a list of supported variants, have a look at the documentation of [`KMeans`].
+//! 
+//! ## Supported centroid initializations
+//! The outcome of each K-Means run depends on the initialization of its clusters. There exist
+//! multiple algorithms for this initialization, most of which are based on at least some
+//! degree of randomness. For a list of implemented initialization methods, see [`KMeans`].
+//! 
+//! ## Supported primitive types
+//! - [`f32`]
+//! - [`f64`]
+//! 
+//! ## Example
+//! Both: Supported variants and supported centroid initializations can be combined at will.
+//! Here is an example showing the default full k-Means implementation, using K-Mean++ initialization:
+//! 
+//! ```rust
+//! use kmeans::*;
+//!
+//! fn main() {
+//!     let (sample_cnt, sample_dims, k, max_iter) = (20000, 200, 4, 100);
+//! 
+//!     // Generate some random data
+//!     let mut samples = vec![0.0f64;sample_cnt * sample_dims];
+//!     samples.iter_mut().for_each(|v| *v = rand::random());
+//! 
+//!     // Calculate kmeans, using kmean++ as initialization-method
+//!     let kmean = KMeans::new(samples, sample_cnt, sample_dims);
+//!     let result = kmean.kmeans(k, max_iter, KMeans::init_kmeanplusplus, &mut rand::thread_rng());
+//! 
+//!     println!("Centroids: {:?}", result.centroids);
+//!     println!("Cluster-Assignments: {:?}", result.assignments);
+//!     println!("Error: {}", result.distsum);
+//! }
+//! ```
+//! 
+//! ## Short API-Overview / Description
+//! Entry-point of the library is the [`KMeans`] struct. This struct is generic over the underlying primitive
+//! type, that should be used for the calculations. To use KMeans, an instance of this struct is created, taking
+//! over the sample data into its ownership (and doing some memory-related optimizations).
+//! 
+//! **Note**: The input-data has to use the same primitive as the required output-data (distances).
+//! 
+//! The [`KMeans`] struct's instance-methods represent the supported k-Means variants & implementations.
+//! Calling such a method (e.g. [`KMeans::kmeans`]) on the struct does not mutate it, so multiple runs can be
+//! done in parallel (the algorithm itself is already parallellized though). Internally, a new instance of
+//! [`KMeansState`] is used to store the state (and finally the result) of a K-Means calculation.
+//! 
+//! All of the instance-methods take multiple arguments. One of which is the chosen centroid initialization method. These
+//! initialization-method implementations are static methods within the [`KMeans`] struct, which are simply passed in as reference.
+
+extern crate test;
 mod helpers;
 mod memory;
 mod kmeans_impl;
 
-pub use kmeans_impl::{KMeanState, KMeans};
 
+pub use kmeans_impl::{KMeansState, KMeans};
 
 
 #[cfg(test)]
