@@ -14,11 +14,12 @@ exclude = ["examples/*"]
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-packed_simd = "0"
+packed_simd = { git = "https://github.com/rust-lang-nursery/packed_simd.git", branch = "master" }
 rayon = "1"
 rand = "0"
 byteorder = "1"
 crossbeam = "0"
+num = "0"
 
 [lib]
 name = "kmeans"
