@@ -1,5 +1,6 @@
 # kmeans
 [![Current Crates.io Version](https://img.shields.io/crates/v/kmeans.svg)](https://crates.io/crates/kmeans)
+[![docs](https://docs.rs/kmeans/badge.svg)](https://docs.rs/kmeans/latest/kmeans/)
 
 kmeans is a small and fast library for k-means clustering calculations.
 Here is a small example, using kmean++ as initialization method:
