@@ -231,29 +231,7 @@ impl<T> KMeans<T> where T: Primitive, [T;LANES]: SimdArray, Simd<[T;LANES]>: Sim
     /// ## Note
     /// This method is not meant for direct invocation. Pass a reference to it, to an instance-method of [`KMeans`].
     pub fn init_kmeanplusplus<'a>(kmean: &KMeans<T>, state: &mut KMeansState<T>, rnd: &'a mut dyn RngCore) {
-        { // Randomly select first centroid
-            let first_idx = rnd.gen_range(0,kmean.sample_cnt);
-            state.set_centroid_from_iter(0, kmean.p_samples.iter().skip(first_idx * kmean.p_sample_dims).cloned())
-        }
-        for k in 1..state.k { // For each following centroid...
-            // Calculate distances & update cluster-assignments
-            kmean.update_cluster_assignments(state, Some(k));
-            
-            //NOTE: following two calculations are not what Matlab lists on documentation, but what Matlab actually implemented...
-            // Calculate sum of distances per centroid
-            let distsum = state.centroid_distances.iter().cloned().sum();
-
-            // Calculate probabilities for each of the samples, to be the new centroid
-            let centroid_probabilities: Vec<T> = state.centroid_distances.iter()
-                                                    .cloned()
-                                                    .map(|d| d / distsum)
-                                                    .collect();
-            // Use rand's WeightedIndex to randomly draw a centroid, while respecting their probabilities
-            let centroid_index = WeightedIndex::new(centroid_probabilities).unwrap();
-            let sampled_centroid_id = centroid_index.sample(rnd);
-            state.set_centroid_from_iter(k,
-                kmean.p_samples.iter().skip(sampled_centroid_id * kmean.p_sample_dims).cloned());
-        }
+        crate::inits::kmeanplusplus::calculate(kmean, state, rnd);
     }
 
     /// Random sample initialization method
@@ -262,12 +240,7 @@ impl<T> KMeans<T> where T: Primitive, [T;LANES]: SimdArray, Simd<[T;LANES]>: Sim
     /// ## Note
     /// This method is not meant for direct invocation. Pass a reference to it, to an instance-method of [`KMeans`].
     pub fn init_random_sample<'a>(kmean: &KMeans<T>, state: &mut KMeansState<T>, rnd: &'a mut dyn RngCore) {
-        kmean.p_samples.chunks_exact(kmean.p_sample_dims)
-            .choose_multiple(rnd, state.k).iter().cloned()
-            .enumerate()
-            .for_each(|(ci, c)| { // Copy randomly chosen centroids into state.centroids
-                state.set_centroid_from_iter(ci, c.iter().cloned());
-            });
+        crate::inits::randomsample::calculate(kmean, state, rnd);
     }
 
 }

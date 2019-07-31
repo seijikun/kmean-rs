@@ -70,6 +70,7 @@ extern crate test;
 mod memory;
 mod kmeans_impl;
 mod variants;
+mod inits;
 
 
 pub use kmeans_impl::{KMeansState, KMeans};
@@ -102,14 +103,14 @@ mod tests {
         });
     }
 
-    #[bench] fn complete_benchmark_minibatch_small_f64(b: &mut Bencher) { complete_benchmark_minibatch::<f64>(b, 30, 200, 2000, 10, 32); }
-    #[bench] fn complete_benchmark_minibatch_mid_f64(b: &mut Bencher) { complete_benchmark_minibatch::<f64>(b, 200, 2000, 200, 10, 32); }
-    #[bench] fn complete_benchmark_minibatch_big_f64(b: &mut Bencher) { complete_benchmark_minibatch::<f64>(b, 1000, 10000, 8, 10, 32); }
-    #[bench] fn complete_benchmark_minibatch_huge_f64(b: &mut Bencher) { complete_benchmark_minibatch::<f64>(b, 2000, 20000, 256, 1, 32); }
-    #[bench] fn complete_benchmark_minibatch_small_f32(b: &mut Bencher) { complete_benchmark_minibatch::<f32>(b, 30, 200, 2000, 10, 32); }
-    #[bench] fn complete_benchmark_minibatch_mid_f32(b: &mut Bencher) { complete_benchmark_minibatch::<f32>(b, 200, 2000, 200, 10, 32); }
-    #[bench] fn complete_benchmark_minibatch_big_f32(b: &mut Bencher) { complete_benchmark_minibatch::<f32>(b, 1000, 10000, 8, 10, 32); }
-    #[bench] fn complete_benchmark_minibatch_huge_f32(b: &mut Bencher) { complete_benchmark_minibatch::<f32>(b, 2000, 20000, 256, 1, 32); }
+    #[bench] fn complete_benchmark_minibatch_small_f64(b: &mut Bencher) { complete_benchmark_minibatch::<f64>(b, 30, 200, 2000, 100, 32); }
+    #[bench] fn complete_benchmark_minibatch_mid_f64(b: &mut Bencher) { complete_benchmark_minibatch::<f64>(b, 200, 2000, 200, 100, 32); }
+    #[bench] fn complete_benchmark_minibatch_big_f64(b: &mut Bencher) { complete_benchmark_minibatch::<f64>(b, 1000, 10000, 8, 100, 32); }
+    #[bench] fn complete_benchmark_minibatch_huge_f64(b: &mut Bencher) { complete_benchmark_minibatch::<f64>(b, 2000, 20000, 256, 30, 32); }
+    #[bench] fn complete_benchmark_minibatch_small_f32(b: &mut Bencher) { complete_benchmark_minibatch::<f32>(b, 30, 200, 2000, 100, 32); }
+    #[bench] fn complete_benchmark_minibatch_mid_f32(b: &mut Bencher) { complete_benchmark_minibatch::<f32>(b, 200, 2000, 200, 100, 32); }
+    #[bench] fn complete_benchmark_minibatch_big_f32(b: &mut Bencher) { complete_benchmark_minibatch::<f32>(b, 1000, 10000, 8, 100, 32); }
+    #[bench] fn complete_benchmark_minibatch_huge_f32(b: &mut Bencher) { complete_benchmark_minibatch::<f32>(b, 2000, 20000, 256, 30, 32); }
     fn complete_benchmark_minibatch<T: Primitive>(b: &mut Bencher, batch_size: usize, sample_cnt: usize, sample_dims: usize, max_iter: usize, k: usize)
                     where [T;LANES] : SimdArray, Simd<[T;LANES]>: SimdWrapper<T> {
         let mut rnd = rand::rngs::StdRng::seed_from_u64(1337);
