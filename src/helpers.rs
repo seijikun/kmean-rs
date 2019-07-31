@@ -6,6 +6,28 @@ pub(crate) fn multiple_roundup(val: usize, multiple_of: usize) -> usize {
     }
 }
 
+#[allow(unused_macros)]
+macro_rules! assert_approx_eq {
+	($left: expr, $right: expr, $tol: expr) => ({
+		match ($left, $right, $tol) {
+			(left_val , right_val, tol_val) => {
+				let delta = (left_val - right_val).abs();
+				if !(delta < tol_val) {
+					panic!(
+						"assertion failed: `(left ≈ right)` \
+						(left: `{:?}`, right: `{:?}`) \
+						with ∆={:1.1e} (allowed ∆={:e})",
+						left_val , right_val, delta, tol_val
+					)
+				}
+			}
+		}
+	});
+	($left: expr, $right: expr) => (assert_approx_eq!(($left), ($right), 1e-15))
+}
+
+
+
 #[cfg(test)]
 mod tests {
 	#[test]
