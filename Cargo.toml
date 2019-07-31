@@ -28,5 +28,8 @@ name = "kmeans"
 path = "src/lib.rs"
 
 [[example]]
-name = "simple"
-path = "examples/simple.rs"
+name = "lloyd"
+path = "examples/lloyd.rs"
+[[example]]
+name = "minibatch"
+path = "examples/minibatch.rs"

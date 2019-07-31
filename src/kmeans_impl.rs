@@ -176,7 +176,7 @@ impl<T> KMeans<T> where T: Primitive, [T;LANES]: SimdArray, Simd<[T;LANES]>: Sim
     /// 
     ///     // Calculate kmeans, using kmean++ as initialization-method
     ///     let kmean = KMeans::new(samples, sample_cnt, sample_dims);
-    ///     let result = kmean.kmeans(k, max_iter, KMeans::init_kmeanplusplus, &mut rand::thread_rng());
+    ///     let result = kmean.kmeans_lloyd(k, max_iter, KMeans::init_kmeanplusplus, &mut rand::thread_rng());
     /// 
     ///     println!("Centroids: {:?}", result.centroids);
     ///     println!("Cluster-Assignments: {:?}", result.assignments);
@@ -188,6 +188,38 @@ impl<T> KMeans<T> where T: Primitive, [T;LANES]: SimdArray, Simd<[T;LANES]>: Sim
         crate::variants::Lloyd::calculate(&self, k, max_iter, init, rnd)
     }
 
+    /// Mini-Batch k-Means implementation.
+    /// (see: https://dl.acm.org/citation.cfm?id=1772862)
+    /// 
+    /// ## Arguments
+    /// - **batch_size**: Amount of samples to use per iteration (higher -> better approximation but slower)
+    /// - **k**: Amount of clusters to search for
+    /// - **max_iter**: Limit the maximum amount of iterations (just pass a high number for infinite)
+    /// - **init**: Initialization-Method to use for the initialization of the **k** centroids
+    /// - **rnd**: Random number generator to use (Pass a seeded one, if you want reproducible results)
+    /// 
+    /// ## Returns
+    /// Instance of [`KMeansState`], containing the final state (result).
+    /// 
+    /// ## Example
+    /// ```rust
+    /// use kmeans::*;
+    /// fn main() {
+    ///     let (sample_cnt, sample_dims, k, max_iter) = (20000, 200, 4, 100);
+    ///
+    ///     // Generate some random data
+    ///     let mut samples = vec![0.0f64;sample_cnt * sample_dims];
+    ///     samples.iter_mut().for_each(|v| *v = rand::random());
+    ///
+    ///     // Calculate kmeans, using kmean++ as initialization-method
+    ///     let kmean = KMeans::new(samples, sample_cnt, sample_dims);
+    ///     let result = kmean.kmeans_minibatch(4, k, max_iter, KMeans::init_random_sample, &mut rand::thread_rng());
+    ///
+    ///     println!("Centroids: {:?}", result.centroids);
+    ///     println!("Cluster-Assignments: {:?}", result.assignments);
+    ///     println!("Error: {}", result.distsum);
+    /// }
+    /// ```
     pub fn kmeans_minibatch<'a, F>(&self, batch_size: usize, k: usize, max_iter: usize, init: F, rnd: &'a mut dyn RngCore) -> KMeansState<T>
             where for<'b> F: FnOnce(&KMeans<T>, &mut KMeansState<T>, &'b mut dyn RngCore) {
         crate::variants::Minibatch::calculate(&self, batch_size, k, max_iter, init, rnd)
@@ -224,6 +256,11 @@ impl<T> KMeans<T> where T: Primitive, [T;LANES]: SimdArray, Simd<[T;LANES]>: Sim
         }
     }
 
+    /// Random sample initialization method
+    /// This initialization method randomly selects k centroids from the samples as initial centroids.
+    /// 
+    /// ## Note
+    /// This method is not meant for direct invocation. Pass a reference to it, to an instance-method of [`KMeans`].
     pub fn init_random_sample<'a>(kmean: &KMeans<T>, state: &mut KMeansState<T>, rnd: &'a mut dyn RngCore) {
         kmean.p_samples.chunks_exact(kmean.p_sample_dims)
             .choose_multiple(rnd, state.k).iter().cloned()

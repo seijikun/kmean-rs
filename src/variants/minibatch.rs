@@ -2,81 +2,114 @@ use crate::{KMeans, KMeansState, memory::*};
 use packed_simd::{Simd, SimdArray};
 use rand::prelude::*;
 use rayon::prelude::*;
+use std::ops::Range;
+
+struct BatchInfo {
+	start_idx: usize,
+	batch_size: usize
+}
+impl BatchInfo {
+	fn gen_range(&self, stride: usize) -> Range<usize> {
+		Range { start: (self.start_idx * stride), end: (self.start_idx * stride + self.batch_size * stride) }
+	}
+}
 
 pub(crate) struct Minibatch<T> where T: Primitive, [T;LANES]: SimdArray, Simd<[T;LANES]>: SimdWrapper<T>{
 	_p: std::marker::PhantomData<T>
 }
 impl<T> Minibatch<T> where T: Primitive, [T;LANES]: SimdArray, Simd<[T;LANES]>: SimdWrapper<T> {
-	fn update_cluster_assignments<'a>(data: &KMeans<T>, state: &mut KMeansState<T>, batch_mask: &[bool], limit_k: Option<usize>) {
+	fn update_cluster_assignments<'a>(data: &KMeans<T>, state: &mut KMeansState<T>, batch: &BatchInfo, shuffled_samples: &'a [T], limit_k: Option<usize>) {
 		let centroids = &state.centroids;
 		let k = limit_k.unwrap_or(state.k);
 
-		data.p_samples.par_chunks_exact(data.p_sample_dims)
-			.zip(state.assignments.par_iter_mut())
-			.zip(state.centroid_distances.par_iter_mut())
-			.zip(batch_mask.par_iter().cloned())
-			.for_each(|(((s, assignment), centroid_dist), mask)| {
-				if mask { // Element has been randomly voted into the batch
-					let (best_idx, best_dist) = centroids.chunks_exact(data.p_sample_dims).take(k)
-						.map(|c| {
-							s.chunks_exact(LANES).map(|i| unsafe { Simd::<[T;LANES]>::from_slice_aligned_unchecked(i) })
-								.zip(c.chunks_exact(LANES).map(|i| unsafe { Simd::<[T;LANES]>::from_slice_aligned_unchecked(i) }))
-									.map(|(sp,cp)| sp - cp)         // <sample> - <centroid>
-									.map(|v| v * v)                 // <vec_components> ^2
-									.sum::<Simd::<[T;LANES]>>()     // sum(<vec_components>^2)
-									.sum()
-						}).enumerate()
-						.min_by(|(_,d0), (_,d1)| d0.partial_cmp(d1).unwrap()).unwrap();
-					*assignment = best_idx;
-					*centroid_dist = best_dist;
-				}
+		shuffled_samples[batch.gen_range(data.p_sample_dims)].par_chunks_exact(data.p_sample_dims)
+			.zip(state.assignments[batch.gen_range(1)].par_iter_mut())
+			.zip(state.centroid_distances[batch.gen_range(1)].par_iter_mut())
+			.for_each(|((s, assignment), centroid_dist)| {
+				let (best_idx, best_dist) = centroids.chunks_exact(data.p_sample_dims).take(k)
+					.map(|c| {
+						s.chunks_exact(LANES).map(|i| unsafe { Simd::<[T;LANES]>::from_slice_aligned_unchecked(i) })
+							.zip(c.chunks_exact(LANES).map(|i| unsafe { Simd::<[T;LANES]>::from_slice_aligned_unchecked(i) }))
+								.map(|(sp,cp)| sp - cp)         // <sample> - <centroid>
+								.map(|v| v * v)                 // <vec_components> ^2
+								.sum::<Simd::<[T;LANES]>>()     // sum(<vec_components>^2)
+								.sum()
+					}).enumerate()
+					.min_by(|(_,d0), (_,d1)| d0.partial_cmp(d1).unwrap()).unwrap();
+				*assignment = best_idx;
+				*centroid_dist = best_dist;
 			});
 	}
 
-	fn update_centroids(data: &KMeans<T>, state: &mut KMeansState<T>, batch_mask: &[bool]) -> T {
+	fn update_centroids<'a>(data: &KMeans<T>, state: &mut KMeansState<T>, batch: &BatchInfo, shuffled_samples: &'a [T]) {
 		let centroid_frequency = &mut state.centroid_frequency;
 		let centroids = &mut state.centroids;
 		let assignments = &state.assignments;
 
-		data.p_samples.chunks_exact(data.p_sample_dims)
-			.zip(assignments.iter().cloned())
-			.zip(batch_mask.iter().cloned())
-			.for_each(|((sample, assignment),mask)| {
-				if mask {
-					centroid_frequency[assignment] += 1;
-					let learn_rate = T::one() / T::from(centroid_frequency[assignment]).unwrap();
-					let inv_learn_rate = T::one() - learn_rate;
-					centroids.iter_mut().skip(assignment * data.p_sample_dims).take(data.p_sample_dims)
-						.zip(sample.iter().cloned())
-						.for_each(|(c, s)| {
-							*c = inv_learn_rate * *c + learn_rate * s;
-						});
-				}
+		shuffled_samples[batch.gen_range(data.p_sample_dims)].chunks_exact(data.p_sample_dims)
+			.zip(assignments[batch.gen_range(1)].iter().cloned())
+			.for_each(|(sample, assignment)| {
+				centroid_frequency[assignment] += 1;
+				let learn_rate = T::one() / T::from(centroid_frequency[assignment]).unwrap();
+				let inv_learn_rate = T::one() - learn_rate;
+				centroids.iter_mut().skip(assignment * data.p_sample_dims).take(data.p_sample_dims)
+					.zip(sample.iter().cloned())
+					.for_each(|(c, s)| {
+						*c = inv_learn_rate * *c + learn_rate * s;
+					});
 			});
-		
-		state.centroid_distances.iter().cloned().sum()
+	}
+
+	fn shuffle_samples<'a>(data: &KMeans<T>, rnd: &'a mut dyn RngCore) -> (Vec<usize>, Vec<T>) {
+		let mut idxs: Vec<usize> = (0..data.sample_cnt).collect();
+		idxs.shuffle(rnd);
+
+		let mut shuffled_samples = AlignedFloatVec::new(data.p_samples.len());
+		shuffled_samples.chunks_exact_mut(data.p_sample_dims)
+			.zip(idxs.iter().map(|i| &data.p_samples[(i * data.p_sample_dims)..(i * data.p_sample_dims) + data.p_sample_dims] ))
+			.for_each(|(dst, src)| {
+				dst.copy_from_slice(src);
+			});
+
+		(idxs, shuffled_samples)
+	}
+
+	fn unshuffle_state(shuffle_idxs: &[usize], state: &mut KMeansState<T>) {
+		for (from, to) in shuffle_idxs.iter().cloned().enumerate() {
+			state.assignments.swap(from, to);
+			state.centroid_distances.swap(from, to);
+		}
 	}
 
 	pub fn calculate<'a, F>(data: &KMeans<T>, batch_size: usize, k: usize, max_iter: usize, init: F, rnd: &'a mut dyn RngCore) -> KMeansState<T>
 				where for<'b> F: FnOnce(&KMeans<T>, &mut KMeansState<T>, &'b mut dyn RngCore) {
 		assert!(k <= data.sample_cnt);
+		assert!(batch_size <= data.sample_cnt);
+
+		// Copy and shuffle sample_data, then only take consecutive blocks (with batch_size) from there
+		let (shuffle_idxs, shuffled_samples) = Self::shuffle_samples(data, rnd);
+
 
 		let mut state = KMeansState::new(data.sample_cnt, data.p_sample_dims, k);
         state.distsum = T::infinity();
-		// Count how many times, the distsum did not improve, exit after 5 iterations without improvement
+		// Count how many times the distsum did not improve, exit after 5 iterations without improvement
 		let mut improvement_counter = 0;
 
 		// Initialize clusters
 		init(&data, &mut state, rnd);
+		// Update cluster assignments for all samples, to get rid of the INFINITES in centroid_distances
+		Self::update_cluster_assignments(data, &mut state, &BatchInfo{start_idx: 0, batch_size: data.sample_cnt}, &shuffled_samples, None);
 
 		for _ in 1..=max_iter {
-			// Shuffle and get a random batch (of approximately the size batch_size)
-			let selection_chance = 1.0f32 / batch_size as f32;
-			let mut batch_mask = vec![false;data.sample_cnt];
-			batch_mask.iter_mut().for_each(|b| *b = rnd.gen_range(0.0f32, 1.0f32) < selection_chance);
+			// Only shuffle a beginning index for a consecutive block within the shuffled samples as batch
+			let batch = BatchInfo {
+				batch_size,
+				start_idx: rnd.gen_range(0, data.sample_cnt - batch_size)
+			};
 
-			Self::update_cluster_assignments(data, &mut state, &batch_mask, None);
-			let new_distsum = Self::update_centroids(data, &mut state, &batch_mask);
+			Self::update_cluster_assignments(data, &mut state, &batch, &shuffled_samples, None);
+			let new_distsum = state.centroid_distances.iter().cloned().sum();
+			Self::update_centroids(data, &mut state, &batch, &shuffled_samples);
 
             if (state.distsum - new_distsum) < T::from(0.0005).unwrap() {
 				improvement_counter += 1;
@@ -89,6 +122,8 @@ impl<T> Minibatch<T> where T: Primitive, [T;LANES]: SimdArray, Simd<[T;LANES]>: 
             state.distsum = new_distsum;
 		}
 
+		// Unshuffle state, so that all sample - x mappings are aligned to the original data.p_samples input
+		Self::unshuffle_state(&shuffle_idxs, &mut state);
 		data.update_cluster_assignments(&mut state, None);
 
 		let (assignments, centroid_frequency, centroid_distances, distsum) =
@@ -122,12 +157,12 @@ mod tests {
         let res = kmean.kmeans_minibatch(30, 3, 100, KMeans::init_kmeanplusplus, &mut rnd);
 
         // SHOULD solution
-        let should_assignments = vec![1usize, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 2, 2, 2, 2, 2, 0, 2, 2, 2, 2, 2, 2, 0, 2, 2, 2, 2, 2, 0, 2, 0, 2, 0, 2, 2, 0, 0, 2, 2, 2, 2, 2, 0, 2, 2, 2, 2, 0, 2, 2, 2, 2, 2, 2, 2, 0, 2, 2, 0];
-        let should_centroid_distances = vec![0.004669128962757853, 0.004669128962757853, 0.024844567559249204, 0.004493690366266468, 0.004669128962757853, 0.08589719913819599, 0.005546321945213996, 0.004493690366266468, 0.004669128962757853, 0.023616497383810324, 0.004493690366266468, 0.02431825176977512, 0.02379193598030171, 0.14431825176977575, 0.06502000615574062, 0.02624807633117876, 0.0465989535241615, 0.005546321945213996, 0.06502000615573984, 0.0053708833487226115, 0.0641428131732837, 0.02624807633117876, 0.20537088334872333, 0.1267743921206521, 0.20379193598030088, 0.02431825176977512, 0.046072637734687415, 0.004493690366266468, 0.004669128962757853, 0.02431825176977512, 0.02431825176977512, 0.02624807633117876, 0.023616497383810324, 0.004669128962757853, 0.004493690366266468, 0.06502000615574062, 0.024844567559249204, 0.02379193598030171, 0.024844567559249204, 0.004493690366266468, 0.025721760541705347, 0.025721760541705347, 0.024844567559249204, 0.14782702369959969, 0.22554632194521318, 0.005546321945213996, 0.02431825176977512, 0.004669128962757853, 0.004493690366266468, 0.004669128962757853, 0.05834773963152318, 0.0028522441360278403, 0.1902396315234149, 0.24222161350539811, 0.019699090982874434, 0.02645584773963155, 0.07474413602791946, 1.5696990909828772, 0.043302694586478147, 0.3235729648567497, 1.1433927846765701, 0.07231170359548768, 0.4276270189108037, 0.05834773963152318, 0.7748342261180112, 0.007807199090982979, 0.0028522441360278403, 0.34447386575765065, 0.0028522441360278403, 0.44897837026215526, 0.22798737927116222, 0.24222161350539811, 0.1902396315234149, 0.12195134323512691, 0.05276215404593823, 0.007807199090982979, 0.11519458647836965, 0.3434828747666575, 0.0028522441360278403, 1.1433927846765701, 0.5721315234153087, 0.7970864783702634, 0.3871765684603534, 0.42213152341530563, 0.0028522441360278403, 0.021050442334226004, 0.0565459378297213, 0.029609000892784815, 0.15906846035224506, 0.24222161350539811, 0.07141080269458672, 0.021500892784676307, 0.2840234153072, 1.5696990909828772, 0.09591530719909139, 0.1377171090008933, 0.09591530719909139, 0.05276215404593823, 2.277356748640535, 0.15906846035224506, 0.2121759999999981, 0.5493760000000041, 0.006975999999999664, 0.1245760000000018, 0.015775999999999787, 0.6089759999999962, 0.05924864053242409, 0.3065759999999986, 0.07657600000000084, 0.25817599999999746, 0.5241760000000038, 0.3013760000000028, 0.10297600000000126, 0.578077469361252, 0.6233760000000026, 0.3205760000000016, 0.17857600000000207, 0.7897759999999964, 1.2165759999999957, 0.2870864783702613, 0.06457599999999974, 0.4812306225144056, 0.7801759999999969, 0.30483422611800937, 0.01497600000000039, 0.108576, 0.22798737927116222, 0.30483422611800937, 0.048976000000001, 0.22697600000000134, 0.10937599999999917, 0.34217599999999826, 0.06377600000000076, 0.4039333252171075, 0.505376000000003, 0.12857599999999794, 0.1533760000000001, 0.17857600000000207, 0.22798737927116222, 0.17697600000000138, 0.1533760000000001, 0.5685760000000029, 0.5493760000000041, 0.056575999999999016, 0.19417599999999927, 0.4345760000000016, 0.47987927116305373, 0.3901760000000026, 0.22657600000000072, 0.5185279198117019];
-        let should_centroids = vec![4.465765765765767, 1.4590090090090093, 1.4508771929824569, 0.24561403508771928, 5.820000000000002, 2.0760000000000014];
-		let should_centroid_frequency = vec![61, 50, 39];
+        let should_assignments = vec![2usize, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 0, 1, 0, 1, 1, 0, 0, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1];
+        let should_centroid_distances = vec![0.007848555588905955, 0.007848555588905955, 0.032781614291274165, 0.0029154968865377088, 0.007848555588905955, 0.07397625898746553, 0.008311995341738106, 0.0029154968865377088, 0.007848555588905955, 0.022452057133705558, 0.0029154968865377088, 0.017982438184169496, 0.027385115836073805, 0.16218429194317843, 0.07771467299364243, 0.02384237639220202, 0.05370849379693847, 0.008311995341738106, 0.05351281923463337, 0.00337893663936986, 0.053049379481801225, 0.02384237639220202, 0.22758079039837886, 0.11443969874029768, 0.1831832620770647, 0.017982438184169496, 0.03890931768983381, 0.0029154968865377088, 0.007848555588905955, 0.017982438184169496, 0.017982438184169496, 0.02384237639220202, 0.022452057133705558, 0.007848555588905955, 0.0029154968865377088, 0.07771467299364243, 0.032781614291274165, 0.027385115836073805, 0.032781614291274165, 0.0029154968865377088, 0.03324505404410631, 0.03324505404410631, 0.032781614291274165, 0.13983619719549809, 0.20411014158272903, 0.008311995341738106, 0.017982438184169496, 0.007848555588905955, 0.0029154968865377088, 0.007848555588905955, 0.08192770852569796, 0.01443648045552487, 0.24306805940289053, 0.18499788396429886, 0.04159437519236606, 0.02078735764850551, 0.11557683133271734, 1.414418936595881, 0.04794525238534671, 0.2646645506309673, 1.0087347260695632, 0.05296279624500081, 0.34452419975376986, 0.08192770852569796, 0.6763663050169334, 0.0004540243151738595, 0.01443648045552487, 0.2716820944906114, 0.01443648045552487, 0.3641908664204382, 0.29638384887657776, 0.18499788396429886, 0.24306805940289053, 0.12827858571867862, 0.026471568174822893, 0.0004540243151738595, 0.14908560326253906, 0.42387507694675086, 0.01443648045552487, 1.0087347260695632, 0.47703297168359704, 0.6830505155432456, 0.311015427823948, 0.504208410280082, 0.01443648045552487, 0.04126104185903458, 0.08875226992920762, 0.013629462911664171, 0.11215577870114042, 0.18499788396429886, 0.04680490150815453, 0.034769813788856394, 0.21817332256078922, 1.414418936595881, 0.059313673437981454, 0.0924891120344718, 0.059313673437981454, 0.026471568174822893, 2.0997698137888663, 0.11215577870114042, 0.25483251742013485, 0.402740278949952, 0.03792588074971878, 0.09522621820753883, 0.021030492673229546, 0.8002093453166398, 0.0880856032625442, 0.43750968277446023, 0.09302149379808777, 0.3237301552154091, 0.3747425286687374, 0.20053555454050082, 0.04233532956862054, 0.5058448908734625, 0.46275152754387905, 0.2085445534156424, 0.12632858041226425, 1.0011092328307007, 1.4709067581400357, 0.3502259541397315, 0.04413510459674036, 0.5771908664204388, 0.9971047333931298, 0.3835417436134196, 0.0001306051591695878, 0.17081676938863688, 0.29638384887657776, 0.3835417436134196, 0.011232967363895138, 0.24901699436051686, 0.1917166569026966, 0.4904118200073063, 0.0232352170826806, 0.4773838488765723, 0.48721721933239726, 0.19972565577783818, 0.10723971652025135, 0.12632858041226425, 0.29638384887657776, 0.0934376917733458, 0.10723971652025135, 0.41074927782509363, 0.402740278949952, 0.08193038018728956, 0.16813960403431127, 0.29964691562036755, 0.5338426411546771, 0.26364016646401134, 0.13744219121091655, 0.45073802923116657];
+        let should_centroids = vec![4.414210526315793, 1.4158771929824516, 5.705511811023627, 2.089988751406073, 1.4746652935118412, 0.24768280123583925];
+		let should_centroid_frequency = vec![58, 42, 50];
 
-        assert_eq!(res.distsum, 33.33203156992827);
+        assert_eq!(res.distsum, 32.11922329828416);
         assert_eq!(res.sample_dims, LANES);
         assert_eq!(res.assignments, should_assignments);
         assert_eq!(res.centroid_distances, should_centroid_distances);
@@ -145,11 +180,11 @@ mod tests {
 
         // SHOULD solution
         let should_assignments = vec![1usize, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 2, 2, 2, 2, 2, 0, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 0, 2, 2, 2, 0, 2, 2, 0, 0, 2, 2, 2, 2, 2, 0, 2, 2, 2, 2, 0, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2];
-        let should_centroid_distances = vec![0.0052691246, 0.0052691246, 0.027129695, 0.0034085654, 0.0052691246, 0.082943276, 0.006897025, 0.0034085654, 0.0052691246, 0.02178067, 0.0034085654, 0.021548016, 0.023641229, 0.14922288, 0.06899021, 0.026664365, 0.050385494, 0.006897025, 0.061315376, 0.0050364654, 0.059687477, 0.026664365, 0.21271135, 0.124571174, 0.19596632, 0.021548016, 0.044803813, 0.0034085654, 0.0052691246, 0.021548016, 0.021548016, 0.026664365, 0.02178067, 0.0052691246, 0.0034085654, 0.06899021, 0.027129695, 0.023641229, 0.027129695, 0.0034085654, 0.028757595, 0.028757595, 0.027129695, 0.14805962, 0.21922211, 0.006897025, 0.021548016, 0.0052691246, 0.0034085654, 0.0052691246, 0.12008819, 0.03325139, 0.31039473, 0.13335297, 0.072537154, 0.029782018, 0.16355759, 1.2631483, 0.06906778, 0.20580173, 0.8817198, 0.035394013, 0.2781489, 0.12008819, 0.57620984, 0.002230895, 0.03325139, 0.21743473, 0.03325139, 0.29059765, 0.36631304, 0.13335297, 0.31039473, 0.15661879, 0.011210372, 0.002230895, 0.1993743, 0.51314986, 0.03325139, 0.8817198, 0.39131197, 0.5802914, 0.24233234, 0.56726956, 0.03325139, 0.064986095, 0.13182288, 0.010496214, 0.07263882, 0.13335297, 0.038761493, 0.060802463, 0.16161823, 1.2631483, 0.03192464, 0.060189918, 0.03192464, 0.011210372, 1.9170254, 0.07263882, 0.28167185, 0.37486935, 0.045805182, 0.08100438, 0.029271454, 0.8326073, 0.116720796, 0.44780698, 0.08580509, 0.35407212, 0.35073593, 0.17966977, 0.03620378, 0.47833547, 0.45420238, 0.20313612, 0.10860403, 1.040874, 1.521542, 0.42968044, 0.052737623, 0.625935, 1.0291408, 0.46559876, 0.001004454, 0.17060572, 0.36631304, 0.46559876, 0.008604134, 0.23407185, 0.19887257, 0.5119404, 0.024470747, 0.56896615, 0.457538, 0.22233891, 0.116203986, 0.10860403, 0.36631304, 0.08380338, 0.116203986, 0.3983357, 0.37486935, 0.09753835, 0.18447083, 0.2907361, 0.5024689, 0.24313635, 0.13553655, 0.41900277];
-        let should_centroids = vec![4.353571, 1.3913265, 1.4593028, 0.24186051, 5.6879983, 2.070667];
+        let should_centroid_distances = vec![0.007960148, 0.007960148, 0.032975376, 0.0029449286, 0.007960148, 0.0736325, 0.0083191395, 0.0029449286, 0.007960148, 0.022585936, 0.0029449286, 0.017929718, 0.027601156, 0.16264677, 0.07799055, 0.02366291, 0.053693358, 0.0083191395, 0.05327351, 0.00330392, 0.05291452, 0.02366291, 0.22802101, 0.11399148, 0.18288405, 0.017929718, 0.0386477, 0.0029449286, 0.007960148, 0.017929718, 0.017929718, 0.02366291, 0.022585936, 0.007960148, 0.0029449286, 0.07799055, 0.032975376, 0.027601156, 0.032975376, 0.0029449286, 0.033334367, 0.033334367, 0.032975376, 0.13936569, 0.20360203, 0.0083191395, 0.017929718, 0.007960148, 0.0029449286, 0.007960148, 0.10170213, 0.025305545, 0.2803908, 0.15415739, 0.05907679, 0.023013817, 0.14399388, 1.3243209, 0.056785062, 0.23153187, 0.9318633, 0.043991756, 0.30071977, 0.10170213, 0.61907244, 0.00038839362, 0.025305545, 0.23449111, 0.025305545, 0.31809425, 0.34005713, 0.15415739, 0.2803908, 0.13941038, 0.015471214, 0.00038839362, 0.17547369, 0.47645372, 0.025305545, 0.9318633, 0.4243231, 0.61940587, 0.2692401, 0.54202217, 0.025305545, 0.056451425, 0.112848, 0.009242535, 0.08792873, 0.15415739, 0.038096637, 0.04793092, 0.18301149, 1.3243209, 0.041700028, 0.07055413, 0.041700028, 0.015471214, 1.9941528, 0.08792873, 0.29539934, 0.3488183, 0.056005783, 0.07821336, 0.034605745, 0.8749969, 0.107597314, 0.47720495, 0.09221093, 0.37239802, 0.324417, 0.16281559, 0.028010666, 0.44741812, 0.4268119, 0.18521039, 0.10121457, 1.0875942, 1.5771911, 0.39416197, 0.053205587, 0.59041923, 1.0763967, 0.43382835, 0.002008188, 0.18620843, 0.34005713, 0.43382835, 0.0050094463, 0.24101347, 0.21880579, 0.54540104, 0.02060817, 0.5279331, 0.45581853, 0.2412006, 0.11180563, 0.10121457, 0.34005713, 0.07101184, 0.11180563, 0.3712131, 0.3488183, 0.107203186, 0.18440303, 0.26821196, 0.47181943, 0.22141585, 0.12220924, 0.39321962];
+        let should_centroids = vec![4.3811436, 1.3942707, 1.4750761, 0.24820505, 5.665006, 2.0720065];
 		let should_centroid_frequency = vec![56, 50, 44];
 
-        assert_eq!(res.distsum, 31.670727);
+        assert_eq!(res.distsum, 31.785213);
         assert_eq!(res.sample_dims, LANES);
         assert_eq!(res.assignments, should_assignments);
         assert_eq!(res.centroid_distances, should_centroid_distances);

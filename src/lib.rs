@@ -42,7 +42,7 @@
 //! 
 //!     // Calculate kmeans, using kmean++ as initialization-method
 //!     let kmean = KMeans::new(samples, sample_cnt, sample_dims);
-//!     let result = kmean.kmeans(k, max_iter, KMeans::init_kmeanplusplus, &mut rand::thread_rng());
+//!     let result = kmean.kmeans_lloyd(k, max_iter, KMeans::init_kmeanplusplus, &mut rand::thread_rng());
 //! 
 //!     println!("Centroids: {:?}", result.centroids);
 //!     println!("Cluster-Assignments: {:?}", result.assignments);
@@ -117,7 +117,7 @@ mod tests {
         samples.iter_mut().for_each(|v| *v = rnd.gen_range(T::zero(), T::from(1.0).unwrap()));
         let kmean = KMeans::new(samples, sample_cnt, sample_dims);
         b.iter(|| {
-            kmean.kmeans_minibatch(batch_size, k, max_iter, KMeans::init_kmeanplusplus, &mut rnd)
+            kmean.kmeans_minibatch(batch_size, k, max_iter, KMeans::init_random_sample, &mut rnd)
         });
     }
 }
