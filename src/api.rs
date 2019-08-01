@@ -163,7 +163,9 @@ impl<T> KMeans<T> where T: Primitive, [T;LANES]: SimdArray, Simd<[T;LANES]>: Sim
         let centroids = &state.centroids;
         let k = limit_k.unwrap_or(state.k);
 
-        self.p_samples.par_chunks_exact(self.p_sample_dims)
+		// TODO: Switch to par_chunks_mut, when that is merged in rayon (https://github.com/rayon-rs/rayon/pull/629).
+		// par_chunks() works, because sample-dimensions are manually padded, so that there is no remainder
+        self.p_samples.par_chunks(self.p_sample_dims)
             .zip(state.assignments.par_iter_mut())
             .zip(state.centroid_distances.par_iter_mut())
             .for_each(|((s, assignment), centroid_dist)| {
