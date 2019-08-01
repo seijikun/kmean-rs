@@ -17,7 +17,7 @@ fn main() {
 
     // Calculate kmeans, using kmean++ as initialization-method
     let kmean = KMeans::new(samples, sample_cnt, sample_dims);
-    let result = kmean.kmeans_lloyd(k, max_iter, KMeans::init_kmeanplusplus, &mut rand::thread_rng());
+    let result = kmean.kmeans_lloyd(k, max_iter, KMeans::init_kmeanplusplus, &mut rand::thread_rng(), None);
 
     println!("Centroids: {:?}", result.centroids);
     println!("Cluster-Assignments: {:?}", result.assignments);
