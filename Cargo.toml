@@ -22,6 +22,7 @@ num = "0"
 
 [patch.crates-io]
 packed_simd = { git = "https://github.com/rust-lang-nursery/packed_simd.git", branch = "master" }
+rayon = { git = "https://github.com/zesterer/rayon.git" }
 
 [lib]
 name = "kmeans"
