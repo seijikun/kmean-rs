@@ -1,4 +1,4 @@
-use crate::{KMeans, KMeansState, memory::*};
+use crate::{KMeans, KMeansEvt, KMeansState, memory::*};
 use packed_simd::{Simd, SimdArray};
 use rand::prelude::*;
 use rayon::prelude::*;
@@ -81,8 +81,8 @@ impl<T> Minibatch<T> where T: Primitive, [T;LANES]: SimdArray, Simd<[T;LANES]>: 
 		}
 	}
 
-	#[inline(always)] pub fn calculate<'a, F>(data: &KMeans<T>, batch_size: usize, k: usize, max_iter: usize, init: F, rnd: &'a mut dyn RngCore) -> KMeansState<T>
-				where for<'b> F: FnOnce(&KMeans<T>, &mut KMeansState<T>, &'b mut dyn RngCore) {
+	#[inline(always)] pub fn calculate<'a, 'b, F>(data: &KMeans<T>, batch_size: usize, k: usize, max_iter: usize, init: F, rnd: &'a mut dyn RngCore, evt: KMeansEvt<'b, T>) -> KMeansState<'b, T>
+				where for<'c> F: FnOnce(&KMeans<T>, &mut KMeansState<T>, &'c mut dyn RngCore) {
 		assert!(k <= data.sample_cnt);
 		assert!(batch_size <= data.sample_cnt);
 
@@ -90,17 +90,18 @@ impl<T> Minibatch<T> where T: Primitive, [T;LANES]: SimdArray, Simd<[T;LANES]>: 
 		let (shuffle_idxs, shuffled_samples) = Self::shuffle_samples(data, rnd);
 
 
-		let mut state = KMeansState::new(data.sample_cnt, data.p_sample_dims, k);
+		let mut state = KMeansState::new(data.sample_cnt, data.p_sample_dims, k, evt);
         state.distsum = T::infinity();
 		// Count how many times the distsum did not improve, exit after 5 iterations without improvement
 		let mut improvement_counter = 0;
 
-		// Initialize clusters
+		// Initialize clusters and notify subscriber
 		init(&data, &mut state, rnd);
+        (state.evt.init_done)(&state);
 		// Update cluster assignments for all samples, to get rid of the INFINITES in centroid_distances
 		Self::update_cluster_assignments(data, &mut state, &BatchInfo{start_idx: 0, batch_size: data.sample_cnt}, &shuffled_samples, None);
 
-		for _ in 1..=max_iter {
+		for i in 1..=max_iter {
 			// Only shuffle a beginning index for a consecutive block within the shuffled samples as batch
 			let batch = BatchInfo {
 				batch_size,
@@ -110,6 +111,9 @@ impl<T> Minibatch<T> where T: Primitive, [T;LANES]: SimdArray, Simd<[T;LANES]>: 
 			Self::update_cluster_assignments(data, &mut state, &batch, &shuffled_samples, None);
 			let new_distsum = state.centroid_distances.iter().cloned().sum();
 			Self::update_centroids(data, &mut state, &batch, &shuffled_samples);
+
+			// Notify subscriber about finished iteration
+			(state.evt.iteration_done)(&state, i, new_distsum);
 
             if (state.distsum - new_distsum) < T::from(0.0005).unwrap() {
 				improvement_counter += 1;
@@ -154,7 +158,7 @@ mod tests {
 
         let kmean = KMeans::new(samples, 150, 2);
         let mut rnd = rand::rngs::StdRng::seed_from_u64(1);
-        let res = kmean.kmeans_minibatch(30, 3, 100, KMeans::init_kmeanplusplus, &mut rnd);
+        let res = kmean.kmeans_minibatch(30, 3, 100, KMeans::init_kmeanplusplus, &mut rnd, None);
 
         // SHOULD solution
         let should_assignments = vec![2usize, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 0, 1, 0, 1, 1, 0, 0, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1];
@@ -176,7 +180,7 @@ mod tests {
 
         let kmean = KMeans::new(samples, 150, 2);
         let mut rnd = rand::rngs::StdRng::seed_from_u64(1);
-        let res = kmean.kmeans_minibatch(30, 3, 100, KMeans::init_kmeanplusplus, &mut rnd);
+        let res = kmean.kmeans_minibatch(30, 3, 100, KMeans::init_kmeanplusplus, &mut rnd, None);
 
         // SHOULD solution
         let should_assignments = vec![1usize, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 2, 2, 2, 2, 2, 0, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 0, 2, 2, 2, 0, 2, 2, 0, 0, 2, 2, 2, 2, 2, 0, 2, 2, 2, 2, 0, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2];

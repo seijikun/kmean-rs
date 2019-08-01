@@ -3,6 +3,52 @@ use rayon::prelude::*;
 use rand::prelude::*;
 use packed_simd::{Simd, SimdArray};
 
+pub type InitDoneCallbackFn<'a, T> = &'a dyn Fn(&KMeansState<T>);
+pub type IterationDoneCallbackFn<'a, T> = &'a dyn Fn(&KMeansState<T>, usize, T);
+
+/// This is a structure holding various callbacks, that can be set to get status information from
+/// a running k-means calculation.
+#[derive(Clone)]
+pub struct KMeansEvt<'a, T: Primitive> {
+    /// Callback that is called, when the initialization phase finished
+    /// ## Arguments
+    /// - **state**: Current [`KMeansState`] after the initialization
+    pub(crate) init_done: InitDoneCallbackFn<'a, T>,
+    /// Callback that is called after each iteration
+    /// ## Arguments
+    /// - **state**: Current[`KMeansState`] after the iteration
+    /// - **iteration_id**: Number of the current iteration
+    /// - **distsum**: New distance sum (**state** contains the distsum from the previous iteration)
+    pub(crate) iteration_done: IterationDoneCallbackFn<'a, T>
+}
+impl<'a, T: Primitive> KMeansEvt<'a, T> {
+    pub fn empty() -> Self {
+        Self {
+            init_done: &|_| {},
+            iteration_done: &|_,_,_| {}
+        }
+    }
+    pub fn build() -> KMeansEvtBuilder<'a, T> {
+        KMeansEvtBuilder { evt: KMeansEvt::empty() }
+    }
+}
+impl<'a, T: Primitive> std::fmt::Debug for KMeansEvt<'a, T> {
+    fn fmt(&self, _: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { Ok(()) }
+}
+
+pub struct KMeansEvtBuilder<'a, T: Primitive> {
+    evt: KMeansEvt<'a, T>
+}
+impl<'a, T: Primitive> KMeansEvtBuilder<'a, T> {
+    pub fn init_done(mut self, init_done: InitDoneCallbackFn<'a, T>) -> Self {
+        self.evt.init_done = init_done; self
+    }
+    pub fn iteration_done(mut self, iteration_done: IterationDoneCallbackFn<'a, T>) -> Self {
+        self.evt.iteration_done = iteration_done; self
+    }
+    pub fn build(self) -> KMeansEvt<'a, T> { self.evt }
+}
+
 
 /// This is the internally used data-structure, storing the current state during calculation, as
 /// well as the final result, as returned by the API.
@@ -20,7 +66,7 @@ use packed_simd::{Simd, SimdArray};
 /// - **assignments**: Vector mapping each sample to its respective nearest cluster
 /// - **centroid_distances**: Vector containing each sample's (squared) distance to its centroid
 #[derive(Clone, Debug)]
-pub struct KMeansState<T: Primitive> {
+pub struct KMeansState<'a, T: Primitive> {
     pub k: usize,
     pub distsum: T,
     pub centroids: Vec<T>,
@@ -29,17 +75,19 @@ pub struct KMeansState<T: Primitive> {
     pub centroid_distances: Vec<T>,
 
     pub(crate) sample_dims: usize,
+    pub(crate) evt: KMeansEvt<'a, T>
 }
-impl<T: Primitive> KMeansState<T> {
-    pub(crate) fn new(sample_cnt: usize, sample_dims: usize, k: usize) -> Self {
+impl<'a, T: Primitive> KMeansState<'a, T> {
+    pub(crate) fn new(sample_cnt: usize, sample_dims: usize, k: usize, evt: KMeansEvt<'a, T>) -> Self {
         Self {
             k,
             distsum: T::zero(),
-            sample_dims,
             centroids: AlignedFloatVec::new(sample_dims * k),
             centroid_frequency: vec![0usize;k],
             assignments: vec![0usize;sample_cnt],
-            centroid_distances: vec![T::infinity();sample_cnt]
+            centroid_distances: vec![T::infinity();sample_cnt],
+            sample_dims,
+            evt
         }
     }
     pub(crate) fn set_centroid_from_iter(&mut self, idx: usize, src: impl Iterator<Item = T>) {
@@ -157,6 +205,7 @@ impl<T> KMeans<T> where T: Primitive, [T;LANES]: SimdArray, Simd<[T;LANES]>: Sim
     /// - **max_iter**: Limit the maximum amount of iterations (just pass a high number for infinite)
     /// - **init**: Initialization-Method to use for the initialization of the **k** centroids
     /// - **rnd**: Random number generator to use (Pass a seeded one, if you want reproducible results)
+    /// - **evt**: Optional [`KMeansEvt`] instance, containing callbacks that notify about status of the calculation.
     /// 
     /// ## Returns
     /// Instance of [`KMeansState`], containing the final state (result).
@@ -173,16 +222,16 @@ impl<T> KMeans<T> where T: Primitive, [T;LANES]: SimdArray, Simd<[T;LANES]>: Sim
     /// 
     ///     // Calculate kmeans, using kmean++ as initialization-method
     ///     let kmean = KMeans::new(samples, sample_cnt, sample_dims);
-    ///     let result = kmean.kmeans_lloyd(k, max_iter, KMeans::init_kmeanplusplus, &mut rand::thread_rng());
+    ///     let result = kmean.kmeans_lloyd(k, max_iter, KMeans::init_kmeanplusplus, &mut rand::thread_rng(), None);
     /// 
     ///     println!("Centroids: {:?}", result.centroids);
     ///     println!("Cluster-Assignments: {:?}", result.assignments);
     ///     println!("Error: {}", result.distsum);
     /// }
     /// ```
-    pub fn kmeans_lloyd<'a, F>(&self, k: usize, max_iter: usize, init: F, rnd: &'a mut dyn RngCore) -> KMeansState<T>
-                where for<'b> F: FnOnce(&KMeans<T>, &mut KMeansState<T>, &'b mut dyn RngCore) {
-        crate::variants::Lloyd::calculate(&self, k, max_iter, init, rnd)
+    pub fn kmeans_lloyd<'a, 'b, F>(&self, k: usize, max_iter: usize, init: F, rnd: &'a mut dyn RngCore, evt: Option<KMeansEvt<'b, T>>) -> KMeansState<'b, T>
+                where for<'c> F: FnOnce(&KMeans<T>, &mut KMeansState<T>, &'c mut dyn RngCore) {
+        crate::variants::Lloyd::calculate(&self, k, max_iter, init, rnd, evt.unwrap_or(KMeansEvt::empty()))
     }
 
     /// Mini-Batch k-Means implementation.
@@ -194,6 +243,7 @@ impl<T> KMeans<T> where T: Primitive, [T;LANES]: SimdArray, Simd<[T;LANES]>: Sim
     /// - **max_iter**: Limit the maximum amount of iterations (just pass a high number for infinite)
     /// - **init**: Initialization-Method to use for the initialization of the **k** centroids
     /// - **rnd**: Random number generator to use (Pass a seeded one, if you want reproducible results)
+    /// - **evt**: Optional [`KMeansEvt`] instance, containing callbacks that notify about status of the calculation.
     /// 
     /// ## Returns
     /// Instance of [`KMeansState`], containing the final state (result).
@@ -210,16 +260,16 @@ impl<T> KMeans<T> where T: Primitive, [T;LANES]: SimdArray, Simd<[T;LANES]>: Sim
     ///
     ///     // Calculate kmeans, using kmean++ as initialization-method
     ///     let kmean = KMeans::new(samples, sample_cnt, sample_dims);
-    ///     let result = kmean.kmeans_minibatch(4, k, max_iter, KMeans::init_random_sample, &mut rand::thread_rng());
+    ///     let result = kmean.kmeans_minibatch(4, k, max_iter, KMeans::init_random_sample, &mut rand::thread_rng(), None);
     ///
     ///     println!("Centroids: {:?}", result.centroids);
     ///     println!("Cluster-Assignments: {:?}", result.assignments);
     ///     println!("Error: {}", result.distsum);
     /// }
     /// ```
-    pub fn kmeans_minibatch<'a, F>(&self, batch_size: usize, k: usize, max_iter: usize, init: F, rnd: &'a mut dyn RngCore) -> KMeansState<T>
-            where for<'b> F: FnOnce(&KMeans<T>, &mut KMeansState<T>, &'b mut dyn RngCore) {
-        crate::variants::Minibatch::calculate(&self, batch_size, k, max_iter, init, rnd)
+    pub fn kmeans_minibatch<'a, 'b, F>(&self, batch_size: usize, k: usize, max_iter: usize, init: F, rnd: &'a mut dyn RngCore, evt: Option<KMeansEvt<'b, T>>) -> KMeansState<'b, T>
+            where for<'c> F: FnOnce(&KMeans<T>, &mut KMeansState<T>, &'c mut dyn RngCore) {
+        crate::variants::Minibatch::calculate(&self, batch_size, k, max_iter, init, rnd, evt.unwrap_or(KMeansEvt::empty()))
     }
 
     /// K-Means++ initialization method, as implemented in Matlab
@@ -273,7 +323,7 @@ mod tests {
 
         let kmean = KMeans::new(samples, sample_cnt, sample_dims);
         
-        let mut state = KMeansState::new(kmean.sample_cnt, kmean.p_sample_dims, k);
+        let mut state = KMeansState::new(kmean.sample_cnt, kmean.p_sample_dims, k, KMeansEvt::empty());
         state.centroids.iter_mut()
             .zip(kmean.p_samples.iter())
             .for_each(|(c,s)| *c = *s);
@@ -324,7 +374,7 @@ mod tests {
         samples.iter_mut().for_each(|v| *v = thread_rng().gen_range(T::zero(), T::one()));
         let kmean = KMeans::new(samples, sample_cnt, sample_dims);
 
-        let mut state = KMeansState::new(kmean.sample_cnt, kmean.p_sample_dims, k);
+        let mut state = KMeansState::new(kmean.sample_cnt, kmean.p_sample_dims, k, KMeansEvt::empty());
         state.centroids.iter_mut()
             .zip(kmean.p_samples.iter())
             .for_each(|(c,s)| *c = *s);

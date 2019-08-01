@@ -1,4 +1,4 @@
-use crate::{KMeans, KMeansState, memory::*};
+use crate::{KMeans, KMeansState, KMeansEvt, memory::*};
 use packed_simd::{Simd, SimdArray};
 use rand::prelude::*;
 
@@ -95,19 +95,23 @@ impl<T> Lloyd<T> where T: Primitive, [T;LANES]: SimdArray, Simd<[T;LANES]>: Simd
         new_distsum
     }
 
-    #[inline(always)] pub fn calculate<'a, F>(data: &KMeans<T>, k: usize, max_iter: usize, init: F, rnd: &'a mut dyn RngCore) -> KMeansState<T>
-                where for<'b> F: FnOnce(&KMeans<T>, &mut KMeansState<T>, &'b mut dyn RngCore) {
+    #[inline(always)] pub fn calculate<'a, 'b, F>(data: &KMeans<T>, k: usize, max_iter: usize, init: F, rnd: &'a mut dyn RngCore, evt: KMeansEvt<'b, T>) -> KMeansState<'b, T>
+                where for<'c> F: FnOnce(&KMeans<T>, &mut KMeansState<T>, &'c mut dyn RngCore) {
         assert!(k <= data.sample_cnt);
 
-        let mut state = KMeansState::new(data.sample_cnt, data.p_sample_dims, k);
+        let mut state = KMeansState::new(data.sample_cnt, data.p_sample_dims, k, evt);
         state.distsum = T::infinity();
 
-        // Initialize clusters
+        // Initialize clusters and notify subscriber
         init(&data, &mut state, rnd);
+        (state.evt.init_done)(&state);
 
-        for _ in 1..=max_iter {
+        for i in 1..=max_iter {
             data.update_cluster_assignments(&mut state, None);
             let new_distsum = Self::update_centroids(data, &mut state);
+
+			// Notify subscriber about finished iteration
+			(state.evt.iteration_done)(&state, i, new_distsum);
 
             if (state.distsum - new_distsum) < T::from(0.0005).unwrap() {
                 break;
@@ -132,7 +136,7 @@ mod tests {
 
         let kmean = KMeans::new(samples, 150, 2);
         let mut rnd = rand::rngs::StdRng::seed_from_u64(1);
-        let res = kmean.kmeans_lloyd(3, 100, KMeans::init_kmeanplusplus, &mut rnd);
+        let res = kmean.kmeans_lloyd(3, 100, KMeans::init_kmeanplusplus, &mut rnd, None);
 
         // SHOULD solution
         let should_assignments = vec![1usize, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 2, 2, 2, 2, 2, 0, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 0, 2, 2, 2, 2, 2, 2, 0, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 0, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2];
@@ -154,7 +158,7 @@ mod tests {
 
         let kmean = KMeans::new(samples, 150, 2);
         let mut rnd = rand::rngs::StdRng::seed_from_u64(1);
-        let res = kmean.kmeans_lloyd(3, 100, KMeans::init_kmeanplusplus, &mut rnd);
+        let res = kmean.kmeans_lloyd(3, 100, KMeans::init_kmeanplusplus, &mut rnd, None);
 
         // SHOULD solution
         let should_assignments = vec![1usize, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 2, 2, 2, 2, 2, 0, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 0, 2, 2, 2, 0, 2, 2, 0, 0, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 0, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2];

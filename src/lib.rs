@@ -42,7 +42,35 @@
 //! 
 //!     // Calculate kmeans, using kmean++ as initialization-method
 //!     let kmean = KMeans::new(samples, sample_cnt, sample_dims);
-//!     let result = kmean.kmeans_lloyd(k, max_iter, KMeans::init_kmeanplusplus, &mut rand::thread_rng());
+//!     let result = kmean.kmeans_lloyd(k, max_iter, KMeans::init_kmeanplusplus, &mut rand::thread_rng(), None);
+//! 
+//!     println!("Centroids: {:?}", result.centroids);
+//!     println!("Cluster-Assignments: {:?}", result.assignments);
+//!     println!("Error: {}", result.distsum);
+//! }
+//! ```
+//! 
+//! ## Example (using the status event callbacks)
+//! ```rust
+//! use kmeans::*;
+//! 
+//! fn main() {
+//!     let (sample_cnt, sample_dims, k, max_iter) = (20000, 200, 4, 2500);
+//! 
+//!     // Generate some random data
+//!     let mut samples = vec![0.0f64;sample_cnt * sample_dims];
+//!     samples.iter_mut().for_each(|v| *v = rand::random());
+//! 
+//! 	let evts = KMeansEvt::build()
+//! 	    .init_done(&|_| println!("Initialization completed."))
+//! 	    .iteration_done(&|s, nr, new_distsum|
+//! 		    println!("Iteration {} - Error: {:.2} -> {:.2} | Improvement: {:.2}",
+//! 			    nr, s.distsum, new_distsum, s.distsum - new_distsum))
+//! 		.build();
+//! 
+//!     // Calculate kmeans, using kmean++ as initialization-method
+//!     let kmean = KMeans::new(samples, sample_cnt, sample_dims);
+//!     let result = kmean.kmeans_minibatch(4, k, max_iter, KMeans::init_random_sample, &mut rand::thread_rng(), Some(evts));
 //! 
 //!     println!("Centroids: {:?}", result.centroids);
 //!     println!("Cluster-Assignments: {:?}", result.assignments);
@@ -68,12 +96,12 @@
 extern crate test;
 #[macro_use] mod helpers;
 mod memory;
-mod kmeans_impl;
+mod api;
 mod variants;
 mod inits;
 
 
-pub use kmeans_impl::{KMeansState, KMeans};
+pub use api::{KMeansState, KMeansEvt, KMeans};
 
 
 #[cfg(test)]
@@ -99,7 +127,7 @@ mod tests {
         samples.iter_mut().for_each(|v| *v = rnd.gen_range(T::zero(), T::one()));
         let kmean = KMeans::new(samples, sample_cnt, sample_dims);
         b.iter(|| {
-            kmean.kmeans_lloyd(k, max_iter, KMeans::init_kmeanplusplus, &mut rnd)
+            kmean.kmeans_lloyd(k, max_iter, KMeans::init_kmeanplusplus, &mut rnd, None)
         });
     }
 
@@ -118,7 +146,7 @@ mod tests {
         samples.iter_mut().for_each(|v| *v = rnd.gen_range(T::zero(), T::one()));
         let kmean = KMeans::new(samples, sample_cnt, sample_dims);
         b.iter(|| {
-            kmean.kmeans_minibatch(batch_size, k, max_iter, KMeans::init_random_sample, &mut rnd)
+            kmean.kmeans_minibatch(batch_size, k, max_iter, KMeans::init_random_sample, &mut rnd, None)
         });
     }
 }

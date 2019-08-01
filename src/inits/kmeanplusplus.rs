@@ -37,6 +37,7 @@ use packed_simd::{Simd, SimdArray};
 mod tests {
     use test::Bencher;
     use super::*;
+	use crate::KMeansEvt;
 
     #[bench]
     fn init_kmeanplusplus_f32(b: &mut Bencher) { init_kmeanplusplus::<f32>(b); }
@@ -52,7 +53,7 @@ mod tests {
         let mut samples = vec![T::zero();sample_cnt * sample_dims];
         samples.iter_mut().for_each(|v| *v = rnd.gen_range(T::zero(), T::one()));
         let kmean = KMeans::new(samples, sample_cnt, sample_dims);
-        let mut state = KMeansState::new(sample_cnt, kmean.p_sample_dims, k);
+        let mut state = KMeansState::new(sample_cnt, kmean.p_sample_dims, k, KMeansEvt::empty());
 
         b.iter(|| {
             KMeans::init_kmeanplusplus(&kmean, &mut state, &mut rnd);
