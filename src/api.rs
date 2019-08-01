@@ -273,6 +273,14 @@ impl<T> KMeans<T> where T: Primitive, [T;LANES]: SimdArray, Simd<[T;LANES]>: Sim
     }
 
     /// K-Means++ initialization method, as implemented in Matlab
+    /// 
+    /// ## Description
+    /// This initialization method starts by selecting one sample as first centroid.
+    /// Proceeding from there, the method iteratively selects one new centroid (per iteration) by calculating
+    /// each sample's probability of "being a centroid". This probability is bigger, the farther away a sample
+    /// is from its centroid. Then, one sample is randomly selected, while taking their probability of being
+    /// the next centroid into account. This leads to a tendency of selecting centroids, that are far away from
+    /// their currently assigned cluster's centroid.
     /// (see: https://uk.mathworks.com/help/stats/kmeans.html#bueq7aj-5    Section: More About)
     /// 
     /// ## Note
@@ -281,7 +289,19 @@ impl<T> KMeans<T> where T: Primitive, [T;LANES]: SimdArray, Simd<[T;LANES]>: Sim
         crate::inits::kmeanplusplus::calculate(kmean, state, rnd);
     }
 
-    /// Random sample initialization method
+    /// Random-Parition initialization method
+    /// 
+    /// ## Description
+    /// This initialization method randomly partitions the samples into k partitions, and then calculates these partion's means.
+    /// These means are then used as initial clusters.
+    /// 
+    pub fn init_random_partition<'a>(kmean: &KMeans<T>, state: &mut KMeansState<T>, rnd: &'a mut dyn RngCore) {
+        crate::inits::randompartition::calculate(kmean, state, rnd);
+    }
+
+    /// Random sample initialization method (a.k.a. Forgy)
+    /// 
+    /// ## Description
     /// This initialization method randomly selects k centroids from the samples as initial centroids.
     /// 
     /// ## Note
