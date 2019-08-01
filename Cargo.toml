@@ -17,7 +17,6 @@ exclude = ["examples/*"]
 packed_simd = "0"
 rayon = "1"
 rand = "0"
-crossbeam = "0"
 num = "0"
 
 [patch.crates-io]
@@ -31,6 +30,11 @@ path = "src/lib.rs"
 [[example]]
 name = "lloyd"
 path = "examples/lloyd.rs"
+
 [[example]]
 name = "minibatch"
 path = "examples/minibatch.rs"
+
+[[example]]
+name = "status_events"
+path = "examples/status_events.rs"
