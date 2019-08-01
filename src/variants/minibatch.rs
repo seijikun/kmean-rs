@@ -115,9 +115,12 @@ impl<T> Minibatch<T> where T: Primitive, [T;LANES]: SimdArray, Simd<[T;LANES]>: 
 			// Notify subscriber about finished iteration
 			(state.evt.iteration_done)(&state, i, new_distsum);
 
-            if (state.distsum - new_distsum) < T::from(0.0005).unwrap() {
+			let improvement = state.distsum - new_distsum;
+            if improvement < T::from(0.0005).unwrap() {
 				improvement_counter += 1;
-				if improvement_counter == 5 { // exit after 5 iterations without improvement
+				// If there was no improvement over a course of 5 iterations, abort.
+				// But directly abort, if there was a negative "improvement".
+				if improvement < T::zero() || improvement_counter == 5 {
 					break;
 				}
             } else {
