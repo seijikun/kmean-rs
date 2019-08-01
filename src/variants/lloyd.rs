@@ -95,7 +95,7 @@ impl<T> Lloyd<T> where T: Primitive, [T;LANES]: SimdArray, Simd<[T;LANES]>: Simd
         new_distsum
     }
 
-    pub fn calculate<'a, F>(data: &KMeans<T>, k: usize, max_iter: usize, init: F, rnd: &'a mut dyn RngCore) -> KMeansState<T>
+    #[inline(always)] pub fn calculate<'a, F>(data: &KMeans<T>, k: usize, max_iter: usize, init: F, rnd: &'a mut dyn RngCore) -> KMeansState<T>
                 where for<'b> F: FnOnce(&KMeans<T>, &mut KMeansState<T>, &'b mut dyn RngCore) {
         assert!(k <= data.sample_cnt);
 

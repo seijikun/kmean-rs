@@ -64,7 +64,7 @@ impl<T> Minibatch<T> where T: Primitive, [T;LANES]: SimdArray, Simd<[T;LANES]>: 
 		let mut idxs: Vec<usize> = (0..data.sample_cnt).collect();
 		idxs.shuffle(rnd);
 
-		let mut shuffled_samples = AlignedFloatVec::new(data.p_samples.len());
+		let mut shuffled_samples = AlignedFloatVec::new_uninitialized(data.p_samples.len());
 		shuffled_samples.chunks_exact_mut(data.p_sample_dims)
 			.zip(idxs.iter().map(|i| &data.p_samples[(i * data.p_sample_dims)..(i * data.p_sample_dims) + data.p_sample_dims] ))
 			.for_each(|(dst, src)| {
@@ -81,7 +81,7 @@ impl<T> Minibatch<T> where T: Primitive, [T;LANES]: SimdArray, Simd<[T;LANES]>: 
 		}
 	}
 
-	pub fn calculate<'a, F>(data: &KMeans<T>, batch_size: usize, k: usize, max_iter: usize, init: F, rnd: &'a mut dyn RngCore) -> KMeansState<T>
+	#[inline(always)] pub fn calculate<'a, F>(data: &KMeans<T>, batch_size: usize, k: usize, max_iter: usize, init: F, rnd: &'a mut dyn RngCore) -> KMeansState<T>
 				where for<'b> F: FnOnce(&KMeans<T>, &mut KMeansState<T>, &'b mut dyn RngCore) {
 		assert!(k <= data.sample_cnt);
 		assert!(batch_size <= data.sample_cnt);

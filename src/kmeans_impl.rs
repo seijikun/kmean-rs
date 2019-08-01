@@ -1,9 +1,6 @@
 use crate::{helpers, memory::*};
 use rayon::prelude::*;
-use rand::{
-    prelude::*,
-    distributions::weighted::WeightedIndex
-};
+use rand::prelude::*;
 use packed_simd::{Simd, SimdArray};
 
 
@@ -272,7 +269,7 @@ mod tests {
         let k = 5;
 
         let mut samples = vec![T::zero();sample_cnt * sample_dims];
-        samples.iter_mut().for_each(|i| *i = thread_rng().gen_range(T::zero(), T::from(1.0).unwrap()));
+        samples.iter_mut().for_each(|i| *i = thread_rng().gen_range(T::zero(), T::one()));
 
         let kmean = KMeans::new(samples, sample_cnt, sample_dims);
         
@@ -321,10 +318,10 @@ mod tests {
     fn distance_matrix_calculation_benchmark<T: Primitive>(b: &mut Bencher) where [T;LANES] : SimdArray, Simd<[T;LANES]>: SimdWrapper<T> {
         let sample_cnt = 20000;
         let sample_dims = 2000;
-        let k = 5;
+        let k = 8;
 
         let mut samples = vec![T::zero();sample_cnt * sample_dims];
-        samples.iter_mut().for_each(|v| *v = thread_rng().gen_range(T::zero(), T::from(1.0).unwrap()));
+        samples.iter_mut().for_each(|v| *v = thread_rng().gen_range(T::zero(), T::one()));
         let kmean = KMeans::new(samples, sample_cnt, sample_dims);
 
         let mut state = KMeansState::new(kmean.sample_cnt, kmean.p_sample_dims, k);

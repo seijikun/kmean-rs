@@ -5,10 +5,10 @@ use rand::{
 };
 use packed_simd::{Simd, SimdArray};
 
-pub fn calculate<'a, T: Primitive>(kmean: &KMeans<T>, state: &mut KMeansState<T>, rnd: &'a mut dyn RngCore)
+#[inline(always)] pub fn calculate<'a, T: Primitive>(kmean: &KMeans<T>, state: &mut KMeansState<T>, rnd: &'a mut dyn RngCore)
 				where T: Primitive, [T;LANES]: SimdArray, Simd<[T;LANES]>: SimdWrapper<T> {
 	{ // Randomly select first centroid
-		let first_idx = rnd.gen_range(0,kmean.sample_cnt);
+		let first_idx = rnd.gen_range(0, kmean.sample_cnt);
 		state.set_centroid_from_iter(0, kmean.p_samples.iter().skip(first_idx * kmean.p_sample_dims).cloned())
 	}
 	for k in 1..state.k { // For each following centroid...
@@ -44,17 +44,19 @@ mod tests {
     fn init_kmeanplusplus_f64(b: &mut Bencher) { init_kmeanplusplus::<f64>(b); }
 
     fn init_kmeanplusplus<T: Primitive>(b: &mut Bencher) where [T;LANES] : SimdArray, Simd<[T;LANES]>: SimdWrapper<T> {
-        let sample_cnt = 200000;
-        let sample_dims = 8;
-        let k = 32;
+		let sample_cnt = 20000;
+		let sample_dims = 16;
+		let k = 32;
+		
         let mut rnd = rand::rngs::StdRng::seed_from_u64(1337);
         let mut samples = vec![T::zero();sample_cnt * sample_dims];
-        samples.iter_mut().for_each(|v| *v = rnd.gen_range(T::zero(), T::from(1.0).unwrap()));
+        samples.iter_mut().for_each(|v| *v = rnd.gen_range(T::zero(), T::one()));
         let kmean = KMeans::new(samples, sample_cnt, sample_dims);
+        let mut state = KMeansState::new(sample_cnt, kmean.p_sample_dims, k);
+
         b.iter(|| {
-            let mut state = KMeansState::new(sample_cnt, kmean.p_sample_dims, k);
-            KMeans::init_kmeanplusplus(&kmean, &mut state, &mut thread_rng());
-            state
+            KMeans::init_kmeanplusplus(&kmean, &mut state, &mut rnd);
+            state.distsum
         });
     }
 }
