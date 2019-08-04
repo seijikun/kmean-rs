@@ -1,15 +1,15 @@
-use crate::{KMeans, KMeansState, memory::*};
+use crate::{KMeans, KMeansState, KMeansConfig, memory::*};
 use rand::prelude::*;
 use packed_simd::{Simd, SimdArray};
 
-#[inline(always)] pub fn calculate<'a, T: Primitive>(kmean: &KMeans<T>, state: &mut KMeansState<T>, rnd: &'a mut dyn RngCore)
+#[inline(always)] pub fn calculate<'a, T: Primitive>(kmean: &KMeans<T>, state: &mut KMeansState<T>, config: &KMeansConfig<'a, T>)
 				where T: Primitive, [T;LANES]: SimdArray, Simd<[T;LANES]>: SimdWrapper<T> {
 
 	let (assignments, centroids, centroid_frequency, k) =
 		(&mut state.assignments, &mut state.centroids, &mut state.centroid_frequency, state.k);
 
 	assignments.iter_mut().for_each(|a| {
-		*a = rnd.gen_range(0, k);
+		*a = config.rnd.borrow_mut().gen_range(0, k);
 		centroid_frequency[*a] += 1;
 	});
 	kmean.p_samples.chunks_exact(kmean.p_sample_dims)

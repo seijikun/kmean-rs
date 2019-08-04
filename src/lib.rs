@@ -42,7 +42,7 @@
 //! 
 //!     // Calculate kmeans, using kmean++ as initialization-method
 //!     let kmean = KMeans::new(samples, sample_cnt, sample_dims);
-//!     let result = kmean.kmeans_lloyd(k, max_iter, KMeans::init_kmeanplusplus, &mut rand::thread_rng(), None);
+//!     let result = kmean.kmeans_lloyd(k, max_iter, KMeans::init_kmeanplusplus, &KMeansConfig::default());
 //! 
 //!     println!("Centroids: {:?}", result.centroids);
 //!     println!("Cluster-Assignments: {:?}", result.assignments);
@@ -61,16 +61,16 @@
 //!     let mut samples = vec![0.0f64;sample_cnt * sample_dims];
 //!     samples.iter_mut().for_each(|v| *v = rand::random());
 //! 
-//! 	let evts = KMeansEvt::build()
-//! 	    .init_done(&|_| println!("Initialization completed."))
-//! 	    .iteration_done(&|s, nr, new_distsum|
-//! 		    println!("Iteration {} - Error: {:.2} -> {:.2} | Improvement: {:.2}",
-//! 			    nr, s.distsum, new_distsum, s.distsum - new_distsum))
-//! 		.build();
-//! 
+//!	    let conf = KMeansConfig::build()
+//!		    .init_done(&|_| println!("Initialization completed."))
+//!		    .iteration_done(&|s, nr, new_distsum|
+//!			    println!("Iteration {} - Error: {:.2} -> {:.2} | Improvement: {:.2}",
+//!				    nr, s.distsum, new_distsum, s.distsum - new_distsum))
+//!		    .build();
+//!
 //!     // Calculate kmeans, using kmean++ as initialization-method
 //!     let kmean = KMeans::new(samples, sample_cnt, sample_dims);
-//!     let result = kmean.kmeans_minibatch(4, k, max_iter, KMeans::init_random_sample, &mut rand::thread_rng(), Some(evts));
+//!     let result = kmean.kmeans_minibatch(4, k, max_iter, KMeans::init_random_sample, &conf);
 //! 
 //!     println!("Centroids: {:?}", result.centroids);
 //!     println!("Cluster-Assignments: {:?}", result.assignments);
@@ -86,7 +86,7 @@
 //! **Note**: The input-data has to use the same primitive as the required output-data (distances).
 //! 
 //! The [`KMeans`] struct's instance-methods represent the supported k-Means variants & implementations.
-//! Calling such a method (e.g. [`KMeans::kmeans`]) on the struct does not mutate it, so multiple runs can be
+//! Calling such a method (e.g. [`KMeans::kmeans_lloyd`]) on the struct does not mutate it, so multiple runs can be
 //! done in parallel (the algorithm itself is already parallellized though). Internally, a new instance of
 //! [`KMeansState`] is used to store the state (and finally the result) of a K-Means calculation.
 //! 
@@ -101,7 +101,7 @@ mod variants;
 mod inits;
 
 
-pub use api::{KMeansState, KMeansEvt, KMeans};
+pub use api::{KMeansState, KMeansConfig, KMeansConfigBuilder, KMeans};
 
 
 #[cfg(test)]
@@ -126,8 +126,9 @@ mod tests {
         let mut samples = vec![T::zero();sample_cnt * sample_dims];
         samples.iter_mut().for_each(|v| *v = rnd.gen_range(T::zero(), T::one()));
         let kmean = KMeans::new(samples, sample_cnt, sample_dims);
+        let conf = KMeansConfig::build().random_generator(rnd).build();
         b.iter(|| {
-            kmean.kmeans_lloyd(k, max_iter, KMeans::init_kmeanplusplus, &mut rnd, None)
+            kmean.kmeans_lloyd(k, max_iter, KMeans::init_kmeanplusplus, &conf)
         });
     }
 
@@ -145,8 +146,9 @@ mod tests {
         let mut samples = vec![T::zero();sample_cnt * sample_dims];
         samples.iter_mut().for_each(|v| *v = rnd.gen_range(T::zero(), T::one()));
         let kmean = KMeans::new(samples, sample_cnt, sample_dims);
+        let conf = KMeansConfig::build().random_generator(rnd).build();
         b.iter(|| {
-            kmean.kmeans_minibatch(batch_size, k, max_iter, KMeans::init_random_sample, &mut rnd, None)
+            kmean.kmeans_minibatch(batch_size, k, max_iter, KMeans::init_random_sample, &conf)
         });
     }
 }

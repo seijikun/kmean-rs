@@ -1,4 +1,5 @@
 use crate::{helpers, memory::*};
+use std::cell::RefCell;
 use rayon::prelude::*;
 use rand::prelude::*;
 use packed_simd::{Simd, SimdArray};
@@ -6,10 +7,10 @@ use packed_simd::{Simd, SimdArray};
 pub type InitDoneCallbackFn<'a, T> = &'a dyn Fn(&KMeansState<T>);
 pub type IterationDoneCallbackFn<'a, T> = &'a dyn Fn(&KMeansState<T>, usize, T);
 
-/// This is a structure holding various callbacks, that can be set to get status information from
+/// This is a structure holding various configuration options for the a k-means calculations, such as
+/// the random number generator to use, or a couple of callbacks, that can be set to get status information from
 /// a running k-means calculation.
-#[derive(Clone)]
-pub struct KMeansEvt<'a, T: Primitive> {
+pub struct KMeansConfig<'a, T: Primitive> {
     /// Callback that is called, when the initialization phase finished
     /// ## Arguments
     /// - **state**: Current [`KMeansState`] after the initialization
@@ -19,34 +20,48 @@ pub struct KMeansEvt<'a, T: Primitive> {
     /// - **state**: Current[`KMeansState`] after the iteration
     /// - **iteration_id**: Number of the current iteration
     /// - **distsum**: New distance sum (**state** contains the distsum from the previous iteration)
-    pub(crate) iteration_done: IterationDoneCallbackFn<'a, T>
+    pub(crate) iteration_done: IterationDoneCallbackFn<'a, T>,
+    /// Random number generator to use
+    pub(crate) rnd: Box<RefCell<dyn RngCore>>
 }
-impl<'a, T: Primitive> KMeansEvt<'a, T> {
-    pub fn empty() -> Self {
+impl<'a, T: Primitive> Default for KMeansConfig<'a, T> {
+    fn default() -> Self {
         Self {
             init_done: &|_| {},
-            iteration_done: &|_,_,_| {}
+            iteration_done: &|_,_,_| {},
+            rnd: Box::new(RefCell::new(rand::thread_rng()))
         }
     }
-    pub fn build() -> KMeansEvtBuilder<'a, T> {
-        KMeansEvtBuilder { evt: KMeansEvt::empty() }
+}
+impl<'a, T: Primitive> KMeansConfig<'a, T> {
+    /// Use the [`KMeansConfigBuilder`] to build a [`KMeansConfig`] instance.
+    pub fn build() -> KMeansConfigBuilder<'a, T> {
+        KMeansConfigBuilder { config: KMeansConfig::default() }
     }
 }
-impl<'a, T: Primitive> std::fmt::Debug for KMeansEvt<'a, T> {
+impl<'a, T: Primitive> std::fmt::Debug for KMeansConfig<'a, T> {
     fn fmt(&self, _: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { Ok(()) }
 }
 
-pub struct KMeansEvtBuilder<'a, T: Primitive> {
-    evt: KMeansEvt<'a, T>
+pub struct KMeansConfigBuilder<'a, T: Primitive> {
+    config: KMeansConfig<'a, T>
 }
-impl<'a, T: Primitive> KMeansEvtBuilder<'a, T> {
+impl<'a, T: Primitive> KMeansConfigBuilder<'a, T> {
+    /// Set the callback that should be called after the centroid initialization, before the iteration starts.
     pub fn init_done(mut self, init_done: InitDoneCallbackFn<'a, T>) -> Self {
-        self.evt.init_done = init_done; self
+        self.config.init_done = init_done; self
     }
+    /// Set the callback that should be called after each iteration during a running k-means calculation.
     pub fn iteration_done(mut self, iteration_done: IterationDoneCallbackFn<'a, T>) -> Self {
-        self.evt.iteration_done = iteration_done; self
+        self.config.iteration_done = iteration_done; self
     }
-    pub fn build(self) -> KMeansEvt<'a, T> { self.evt }
+    /// Set the random number generator that should be used in the k-means calculation.
+    /// Use a seeded generator for deterministically repeatable results.
+    pub fn random_generator<R: RngCore + 'static>(mut self, rnd: R) -> Self {
+        self.config.rnd = Box::new(RefCell::new(rnd)); self
+    }
+    /// Return the internally built configuration structure.
+    pub fn build(self) -> KMeansConfig<'a, T> { self.config }
 }
 
 
@@ -66,7 +81,7 @@ impl<'a, T: Primitive> KMeansEvtBuilder<'a, T> {
 /// - **assignments**: Vector mapping each sample to its respective nearest cluster
 /// - **centroid_distances**: Vector containing each sample's (squared) distance to its centroid
 #[derive(Clone, Debug)]
-pub struct KMeansState<'a, T: Primitive> {
+pub struct KMeansState<T: Primitive> {
     pub k: usize,
     pub distsum: T,
     pub centroids: Vec<T>,
@@ -74,11 +89,10 @@ pub struct KMeansState<'a, T: Primitive> {
     pub assignments: Vec<usize>,
     pub centroid_distances: Vec<T>,
 
-    pub(crate) sample_dims: usize,
-    pub(crate) evt: KMeansEvt<'a, T>
+    pub(crate) sample_dims: usize
 }
-impl<'a, T: Primitive> KMeansState<'a, T> {
-    pub(crate) fn new(sample_cnt: usize, sample_dims: usize, k: usize, evt: KMeansEvt<'a, T>) -> Self {
+impl<T: Primitive> KMeansState<T> {
+    pub(crate) fn new(sample_cnt: usize, sample_dims: usize, k: usize) -> Self {
         Self {
             k,
             distsum: T::zero(),
@@ -86,8 +100,7 @@ impl<'a, T: Primitive> KMeansState<'a, T> {
             centroid_frequency: vec![0usize;k],
             assignments: vec![0usize;sample_cnt],
             centroid_distances: vec![T::infinity();sample_cnt],
-            sample_dims,
-            evt
+            sample_dims
         }
     }
     pub(crate) fn set_centroid_from_iter(&mut self, idx: usize, src: impl Iterator<Item = T>) {
@@ -115,11 +128,13 @@ impl<'a, T: Primitive> KMeansState<'a, T> {
 /// as stored in the returned [`KMeansState`] structure.
 /// 
 /// ## Supported variants
-/// - k-Means clustering [`KMeans::kmeans`]
-/// - **\[TODO\]** Mini-Batch k-Means clustering
+/// - k-Means clustering (Lloyd) [`KMeans::kmeans_lloyd`]
+/// - Mini-Batch k-Means clustering [`KMeans::kmeans_minibatch`]
 /// 
 /// ## Supported initialization methods
 /// - K-Mean++ [`KMeans::init_kmeanplusplus`]
+/// - Random-Sample [`KMeans::init_random_sample`]
+/// - Random-Partition [`KMeans::init_random_partition`]
 pub struct KMeans<T> where T: Primitive, [T;LANES]: SimdArray, Simd<[T;LANES]>: SimdWrapper<T> {
     pub(crate) sample_cnt: usize,
     pub(crate) sample_dims: usize,
@@ -206,8 +221,7 @@ impl<T> KMeans<T> where T: Primitive, [T;LANES]: SimdArray, Simd<[T;LANES]>: Sim
     /// - **k**: Amount of clusters to search for
     /// - **max_iter**: Limit the maximum amount of iterations (just pass a high number for infinite)
     /// - **init**: Initialization-Method to use for the initialization of the **k** centroids
-    /// - **rnd**: Random number generator to use (Pass a seeded one, if you want reproducible results)
-    /// - **evt**: Optional [`KMeansEvt`] instance, containing callbacks that notify about status of the calculation.
+    /// - **config**: [`KMeansConfig`] instance, containing several configuration options for the calculation.
     /// 
     /// ## Returns
     /// Instance of [`KMeansState`], containing the final state (result).
@@ -224,16 +238,16 @@ impl<T> KMeans<T> where T: Primitive, [T;LANES]: SimdArray, Simd<[T;LANES]>: Sim
     /// 
     ///     // Calculate kmeans, using kmean++ as initialization-method
     ///     let kmean = KMeans::new(samples, sample_cnt, sample_dims);
-    ///     let result = kmean.kmeans_lloyd(k, max_iter, KMeans::init_kmeanplusplus, &mut rand::thread_rng(), None);
+    ///     let result = kmean.kmeans_lloyd(k, max_iter, KMeans::init_kmeanplusplus, &KMeansConfig::default());
     /// 
     ///     println!("Centroids: {:?}", result.centroids);
     ///     println!("Cluster-Assignments: {:?}", result.assignments);
     ///     println!("Error: {}", result.distsum);
     /// }
     /// ```
-    pub fn kmeans_lloyd<'a, 'b, F>(&self, k: usize, max_iter: usize, init: F, rnd: &'a mut dyn RngCore, evt: Option<KMeansEvt<'b, T>>) -> KMeansState<'b, T>
-                where for<'c> F: FnOnce(&KMeans<T>, &mut KMeansState<T>, &'c mut dyn RngCore) {
-        crate::variants::Lloyd::calculate(&self, k, max_iter, init, rnd, evt.unwrap_or(KMeansEvt::empty()))
+    pub fn kmeans_lloyd<'a, F>(&self, k: usize, max_iter: usize, init: F, config: &KMeansConfig<'a, T>) -> KMeansState<T>
+                where for<'c> F: FnOnce(&KMeans<T>, &mut KMeansState<T>, &KMeansConfig<'c, T>) {
+        crate::variants::Lloyd::calculate(&self, k, max_iter, init, config)
     }
 
     /// Mini-Batch k-Means implementation.
@@ -244,8 +258,7 @@ impl<T> KMeans<T> where T: Primitive, [T;LANES]: SimdArray, Simd<[T;LANES]>: Sim
     /// - **k**: Amount of clusters to search for
     /// - **max_iter**: Limit the maximum amount of iterations (just pass a high number for infinite)
     /// - **init**: Initialization-Method to use for the initialization of the **k** centroids
-    /// - **rnd**: Random number generator to use (Pass a seeded one, if you want reproducible results)
-    /// - **evt**: Optional [`KMeansEvt`] instance, containing callbacks that notify about status of the calculation.
+    /// - **config**: [`KMeansConfig`] instance, containing several configuration options for the calculation.
     /// 
     /// ## Returns
     /// Instance of [`KMeansState`], containing the final state (result).
@@ -262,16 +275,16 @@ impl<T> KMeans<T> where T: Primitive, [T;LANES]: SimdArray, Simd<[T;LANES]>: Sim
     ///
     ///     // Calculate kmeans, using kmean++ as initialization-method
     ///     let kmean = KMeans::new(samples, sample_cnt, sample_dims);
-    ///     let result = kmean.kmeans_minibatch(4, k, max_iter, KMeans::init_random_sample, &mut rand::thread_rng(), None);
+    ///     let result = kmean.kmeans_minibatch(4, k, max_iter, KMeans::init_random_sample, &KMeansConfig::default());
     ///
     ///     println!("Centroids: {:?}", result.centroids);
     ///     println!("Cluster-Assignments: {:?}", result.assignments);
     ///     println!("Error: {}", result.distsum);
     /// }
     /// ```
-    pub fn kmeans_minibatch<'a, 'b, F>(&self, batch_size: usize, k: usize, max_iter: usize, init: F, rnd: &'a mut dyn RngCore, evt: Option<KMeansEvt<'b, T>>) -> KMeansState<'b, T>
-            where for<'c> F: FnOnce(&KMeans<T>, &mut KMeansState<T>, &'c mut dyn RngCore) {
-        crate::variants::Minibatch::calculate(&self, batch_size, k, max_iter, init, rnd, evt.unwrap_or(KMeansEvt::empty()))
+    pub fn kmeans_minibatch<'a, F>(&self, batch_size: usize, k: usize, max_iter: usize, init: F, config: &KMeansConfig<'a, T>) -> KMeansState<T>
+            where for<'c> F: FnOnce(&KMeans<T>, &mut KMeansState<T>, &KMeansConfig<'c, T>) {
+        crate::variants::Minibatch::calculate(&self, batch_size, k, max_iter, init, config)
     }
 
     /// K-Means++ initialization method, as implemented in Matlab
@@ -287,8 +300,8 @@ impl<T> KMeans<T> where T: Primitive, [T;LANES]: SimdArray, Simd<[T;LANES]>: Sim
     /// 
     /// ## Note
     /// This method is not meant for direct invocation. Pass a reference to it, to an instance-method of [`KMeans`].
-    pub fn init_kmeanplusplus<'a>(kmean: &KMeans<T>, state: &mut KMeansState<T>, rnd: &'a mut dyn RngCore) {
-        crate::inits::kmeanplusplus::calculate(kmean, state, rnd);
+    pub fn init_kmeanplusplus<'a>(kmean: &KMeans<T>, state: &mut KMeansState<T>, config: &KMeansConfig<'a, T>) {
+        crate::inits::kmeanplusplus::calculate(kmean, state, config);
     }
 
     /// Random-Parition initialization method
@@ -297,8 +310,8 @@ impl<T> KMeans<T> where T: Primitive, [T;LANES]: SimdArray, Simd<[T;LANES]>: Sim
     /// This initialization method randomly partitions the samples into k partitions, and then calculates these partion's means.
     /// These means are then used as initial clusters.
     /// 
-    pub fn init_random_partition<'a>(kmean: &KMeans<T>, state: &mut KMeansState<T>, rnd: &'a mut dyn RngCore) {
-        crate::inits::randompartition::calculate(kmean, state, rnd);
+    pub fn init_random_partition<'a>(kmean: &KMeans<T>, state: &mut KMeansState<T>, config: &KMeansConfig<'a, T>) {
+        crate::inits::randompartition::calculate(kmean, state, config);
     }
 
     /// Random sample initialization method (a.k.a. Forgy)
@@ -308,8 +321,8 @@ impl<T> KMeans<T> where T: Primitive, [T;LANES]: SimdArray, Simd<[T;LANES]>: Sim
     /// 
     /// ## Note
     /// This method is not meant for direct invocation. Pass a reference to it, to an instance-method of [`KMeans`].
-    pub fn init_random_sample<'a>(kmean: &KMeans<T>, state: &mut KMeansState<T>, rnd: &'a mut dyn RngCore) {
-        crate::inits::randomsample::calculate(kmean, state, rnd);
+    pub fn init_random_sample<'a>(kmean: &KMeans<T>, state: &mut KMeansState<T>, config: &KMeansConfig<'a, T>) {
+        crate::inits::randomsample::calculate(kmean, state, config);
     }
 
 }
@@ -345,7 +358,7 @@ mod tests {
 
         let kmean = KMeans::new(samples, sample_cnt, sample_dims);
         
-        let mut state = KMeansState::new(kmean.sample_cnt, kmean.p_sample_dims, k, KMeansEvt::empty());
+        let mut state = KMeansState::new(kmean.sample_cnt, kmean.p_sample_dims, k);
         state.centroids.iter_mut()
             .zip(kmean.p_samples.iter())
             .for_each(|(c,s)| *c = *s);
@@ -396,7 +409,7 @@ mod tests {
         samples.iter_mut().for_each(|v| *v = thread_rng().gen_range(T::zero(), T::one()));
         let kmean = KMeans::new(samples, sample_cnt, sample_dims);
 
-        let mut state = KMeansState::new(kmean.sample_cnt, kmean.p_sample_dims, k, KMeansEvt::empty());
+        let mut state = KMeansState::new(kmean.sample_cnt, kmean.p_sample_dims, k);
         state.centroids.iter_mut()
             .zip(kmean.p_samples.iter())
             .for_each(|(c,s)| *c = *s);

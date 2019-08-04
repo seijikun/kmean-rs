@@ -17,12 +17,13 @@ fn main() {
 
     // Calculate kmeans, using kmean++ as initialization-method
     let kmean = KMeans::new(samples, sample_cnt, sample_dims);
-    let result = kmean.kmeans_lloyd(k, max_iter, KMeans::init_kmeanplusplus, &mut rand::thread_rng(), None);
+    let result = kmean.kmeans_lloyd(k, max_iter, KMeans::init_kmeanplusplus, &KMeansConfig::default());
 
     println!("Centroids: {:?}", result.centroids);
     println!("Cluster-Assignments: {:?}", result.assignments);
     println!("Error: {}", result.distsum);
 }
+
 ```
 
 ## Datastructures
