@@ -94,12 +94,12 @@ impl<T> Minibatch<T> where T: Primitive, [T;LANES]: SimdArray, Simd<[T;LANES]>: 
 
 		let mut state = KMeansState::new(data.sample_cnt, data.p_sample_dims, k);
         state.distsum = T::infinity();
-		// Count how many times the distsum did not improve, exit after 5 iterations without improvement
-		let mut improvement_counter = 0;
 
 		// Initialize clusters and notify subscriber
 		init(&data, &mut state, config);
         (config.init_done)(&state);
+		let mut abort_strategy = config.abort_strategy.create_logic();
+
 		// Update cluster assignments for all samples, to get rid of the INFINITES in centroid_distances
 		Self::update_cluster_assignments(data, &mut state, &BatchInfo{start_idx: 0, batch_size: data.sample_cnt}, &shuffled_samples, None);
 
@@ -116,17 +116,8 @@ impl<T> Minibatch<T> where T: Primitive, [T;LANES]: SimdArray, Simd<[T;LANES]>: 
 
 			// Notify subscriber about finished iteration
 			(config.iteration_done)(&state, i, new_distsum);
-
-			let improvement = state.distsum - new_distsum;
-            if improvement < T::from(0.0005).unwrap() {
-				improvement_counter += 1;
-				// If there was no improvement over a course of 5 iterations, abort.
-				// But directly abort, if there was a negative "improvement".
-				if improvement < T::zero() || improvement_counter == 5 {
-					break;
-				}
-            } else {
-				improvement_counter = 0;
+			if !abort_strategy.next(new_distsum) {
+				break;
 			}
             state.distsum = new_distsum;
 		}
@@ -156,6 +147,7 @@ impl<T> Minibatch<T> where T: Primitive, [T;LANES]: SimdArray, Simd<[T;LANES]>: 
 #[cfg(test)]
 mod tests {
 	use super::*;
+	use crate::AbortStrategy;
 
 	#[test]
     fn iris_dataset_f64() where {
@@ -163,7 +155,12 @@ mod tests {
 
         let kmean = KMeans::new(samples, 150, 2);
         let rnd = rand::rngs::StdRng::seed_from_u64(1);
-		let conf = KMeansConfig::build().random_generator(rnd).build();
+		let conf = KMeansConfig::build()
+			.random_generator(rnd)
+			.abort_strategy(AbortStrategy::NoImprovementForXIterations {
+				x: 5, threshold: 0.0005f64, abort_on_negative: true
+			})
+			.build();
         let res = kmean.kmeans_minibatch(30, 3, 100, KMeans::init_kmeanplusplus, &conf);
 
         // SHOULD solution
@@ -186,7 +183,12 @@ mod tests {
 
         let kmean = KMeans::new(samples, 150, 2);
         let rnd = rand::rngs::StdRng::seed_from_u64(1);
-		let conf = KMeansConfig::build().random_generator(rnd).build();
+		let conf = KMeansConfig::build()
+			.random_generator(rnd)
+			.abort_strategy(AbortStrategy::NoImprovementForXIterations {
+				x: 5, threshold: 0.0005f32, abort_on_negative: true
+			})
+			.build();
         let res = kmean.kmeans_minibatch(30, 3, 100, KMeans::init_kmeanplusplus, &conf);
 
         // SHOULD solution

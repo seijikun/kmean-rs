@@ -11,7 +11,7 @@ use packed_simd::SimdArray;
 pub(crate) const LANES: usize = 8;
 
 pub trait Primitive: Add + AddAssign + Sum + Sub + SubAssign + Zero + Float + NumCast + SampleUniform
-                + PartialOrd + Copy + Default + Display + Debug + Sync + Send + LowerExp
+                + PartialOrd + Copy + Default + Display + Debug + Sync + Send + LowerExp + 'static
                 + for<'a> AddAssign<&'a Self> + for<'a> Sub<&'a Self> {}
 impl Primitive for f32 {}
 impl Primitive for f64 {}

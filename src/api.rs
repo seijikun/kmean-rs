@@ -1,4 +1,4 @@
-use crate::{helpers, memory::*};
+use crate::{helpers, memory::*, AbortStrategy};
 use std::cell::RefCell;
 use rayon::prelude::*;
 use rand::prelude::*;
@@ -10,6 +10,8 @@ pub type IterationDoneCallbackFn<'a, T> = &'a dyn Fn(&KMeansState<T>, usize, T);
 /// This is a structure holding various configuration options for the a k-means calculations, such as
 /// the random number generator to use, or a couple of callbacks, that can be set to get status information from
 /// a running k-means calculation.
+/// 
+/// For a more detailed information about all possible options, have a look at [`KMeansConfigBuilder`].
 pub struct KMeansConfig<'a, T: Primitive> {
     /// Callback that is called, when the initialization phase finished
     /// ## Arguments
@@ -22,14 +24,19 @@ pub struct KMeansConfig<'a, T: Primitive> {
     /// - **distsum**: New distance sum (**state** contains the distsum from the previous iteration)
     pub(crate) iteration_done: IterationDoneCallbackFn<'a, T>,
     /// Random number generator to use
-    pub(crate) rnd: Box<RefCell<dyn RngCore>>
+    pub(crate) rnd: Box<RefCell<dyn RngCore>>,
+    /// The abort-strategy to use for the running calculation
+    pub(crate) abort_strategy: AbortStrategy<T>
 }
 impl<'a, T: Primitive> Default for KMeansConfig<'a, T> {
     fn default() -> Self {
         Self {
             init_done: &|_| {},
             iteration_done: &|_,_,_| {},
-            rnd: Box::new(RefCell::new(rand::thread_rng()))
+            rnd: Box::new(RefCell::new(rand::thread_rng())),
+            abort_strategy: AbortStrategy::<T>::NoImprovement{
+                threshold: T::from(0.0005).unwrap()
+            }
         }
     }
 }
@@ -59,6 +66,13 @@ impl<'a, T: Primitive> KMeansConfigBuilder<'a, T> {
     /// Use a seeded generator for deterministically repeatable results.
     pub fn random_generator<R: RngCore + 'static>(mut self, rnd: R) -> Self {
         self.config.rnd = Box::new(RefCell::new(rnd)); self
+    }
+    /// Set the abort-strategy to use during a running k-means calculation. For more information,
+    /// see documentation of [`AbortStrategy`].
+    /// ## Default
+    /// [`AbortStrategy::NoImprovement`] `{ threshold: 0.0005 }`
+    pub fn abort_strategy(mut self, abort_strategy: AbortStrategy<T>) -> Self {
+        self.config.abort_strategy = abort_strategy; self
     }
     /// Return the internally built configuration structure.
     pub fn build(self) -> KMeansConfig<'a, T> { self.config }

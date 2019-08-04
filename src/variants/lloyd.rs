@@ -104,6 +104,7 @@ impl<T> Lloyd<T> where T: Primitive, [T;LANES]: SimdArray, Simd<[T;LANES]>: Simd
         // Initialize clusters and notify subscriber
         init(&data, &mut state, config);
         (config.init_done)(&state);
+        let mut abort_strategy = config.abort_strategy.create_logic();
 
         for i in 1..=max_iter {
             data.update_cluster_assignments(&mut state, None);
@@ -111,8 +112,7 @@ impl<T> Lloyd<T> where T: Primitive, [T;LANES]: SimdArray, Simd<[T;LANES]>: Simd
 
 			// Notify subscriber about finished iteration
 			(config.iteration_done)(&state, i, new_distsum);
-
-            if (state.distsum - new_distsum) < T::from(0.0005).unwrap() {
+            if !abort_strategy.next(new_distsum) {
                 break;
             }
             state.distsum = new_distsum;
