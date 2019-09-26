@@ -187,6 +187,28 @@ impl<T> KMeans<T> where T: Primitive, [T;LANES]: SimdArray, Simd<[T;LANES]>: Sim
     }
 
 
+    pub(crate) fn update_centroid_distances(&self, state: &mut KMeansState<T>) {
+        let centroids = &state.centroids;
+
+		// TODO: Switch to par_chunks_exact, when that is merged in rayon (https://github.com/rayon-rs/rayon/pull/629).
+		// par_chunks() works, because sample-dimensions are manually padded, so that there is no remainder
+
+        // manually calculate work-packet size, because rayon does not do static scheduling (which is more apropriate here)
+        let work_packet_size = self.p_samples.len() / self.p_sample_dims / rayon::current_num_threads();
+        self.p_samples.par_chunks(self.p_sample_dims)
+            .with_min_len(work_packet_size)
+            .zip(state.assignments.par_iter().cloned())
+            .zip(state.centroid_distances.par_iter_mut())
+            .for_each(|((s, assignment), centroid_dist)| {
+                let centroid = centroids.chunks_exact(self.p_sample_dims).skip(assignment).next().unwrap();
+                *centroid_dist = s.chunks_exact(LANES).map(|i| unsafe { Simd::<[T;LANES]>::from_slice_aligned_unchecked(i) })
+                    .zip(centroid.chunks_exact(LANES).map(|i| unsafe { Simd::<[T;LANES]>::from_slice_aligned_unchecked(i) }))
+                        .map(|(sp,cp)| sp - cp)         // <sample> - <centroid>
+                        .map(|v| v * v)                 // <vec_components> ^2
+                        .sum::<Simd::<[T;LANES]>>()     // sum(<vec_components>^2)
+                        .sum();
+            });
+    }
 
     pub(crate) fn update_cluster_assignments(&self, state: &mut KMeansState<T>, limit_k: Option<usize>) {
         let centroids = &state.centroids;

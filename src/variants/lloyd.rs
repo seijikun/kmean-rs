@@ -46,35 +46,30 @@ impl<T> Lloyd<T> where T: Primitive, [T;LANES]: SimdArray, Simd<[T;LANES]>: Simd
                 if state.centroid_frequency[i] == 0 {
                     // Find the sample with the highest distance to its centroid, that is not alone in its cluster
                     let mut sample_id = std::usize::MAX;
-                    let mut centroid_id = std::usize::MAX;
-                    for j in data.sample_cnt-1..=0 {
+                    let mut prev_centroid_id = std::usize::MAX;
+                    for j in (0..data.sample_cnt).rev() {
                         sample_id = distance_sorted_samples[j];
-                        centroid_id = state.assignments[sample_id];
-                        if state.centroid_frequency[centroid_id] > 1 {
+                        prev_centroid_id = state.assignments[sample_id];
+                        if state.centroid_frequency[prev_centroid_id] > 1 {
                             break;
                         }
                     }
+                    assert!(sample_id != std::usize::MAX && prev_centroid_id != std::usize::MAX);
                     // Re-Assign found sample to centroid without any samples
-                    let prev_centroid_id = state.assignments[sample_id];
-                    state.centroid_frequency[centroid_id] -= 1;
+                    state.centroid_frequency[prev_centroid_id] -= 1;
                     state.centroid_frequency[i] += 1;
                     new_distsum -= state.centroid_distances[sample_id];
-                    state.centroid_distances[sample_id] = data.p_samples.iter().skip(sample_id * data.p_sample_dims).cloned()
-                        .zip(state.centroids.iter().skip(centroid_id * data.p_sample_dims).cloned())
-                        .take(data.p_sample_dims)
-                        .map(|(s,c)| (s-c) * (s-c))
-                        .sum();
-                    new_distsum += state.centroid_distances[sample_id];
+                    // Centroid is moved into the chosen point -> the points centroid distance is 0
+                    state.centroid_distances[sample_id] = T::zero();
+                    // new_centroids is a sum of all points within a centroid here.
+                    // Subtract chosen sample from its previous centroid
                     new_centroids.iter_mut().skip(prev_centroid_id * data.p_sample_dims).take(data.p_sample_dims)
                         .zip(data.p_samples.iter().skip(sample_id * data.p_sample_dims).cloned())
-                        .for_each(|(cv,sv)| {
-                            *cv -= sv;
-                        });
-                    new_centroids.iter_mut().skip(centroid_id * data.p_sample_dims).take(data.p_sample_dims)
+                        .for_each(|(cv,sv)| { *cv -= sv; });
+                    // Chosen sample is single point in cluster -> set cluster's sum to chosen point
+                    new_centroids.iter_mut().skip(i * data.p_sample_dims).take(data.p_sample_dims)
                         .zip(data.p_samples.iter().skip(sample_id * data.p_sample_dims).cloned())
-                        .for_each(|(cv,sv)| {
-                            *cv += sv;
-                        });
+                        .for_each(|(cv,sv)| { *cv = sv; });
                     state.assignments[sample_id] = i;
                 }
             }
@@ -118,6 +113,8 @@ impl<T> Lloyd<T> where T: Primitive, [T;LANES]: SimdArray, Simd<[T;LANES]>: Simd
             state.distsum = new_distsum;
         }
 
+        data.update_centroid_distances(&mut state);
+        state.distsum = state.centroid_distances.iter().cloned().sum();
         state.remove_padding(data.sample_dims)
     }
 }
@@ -174,5 +171,28 @@ mod tests {
         assert_eq!(res.centroid_distances, should_centroid_distances);
         assert_eq!(res.centroids, should_centroids);
 		assert_eq!(res.centroid_frequency, should_centroid_frequency);
+    }
+
+    #[test]
+    fn empty_cluster_handling() {
+        let samples = vec![1.0, 0.0, 2.0, 0.0, 3.0, 0.0];
+        let initial_centroids = [2.0, 0.0, 1337.0, 0.0];
+
+        let kmean = KMeans::new(samples, 3, 2);
+        let rnd = rand::rngs::StdRng::seed_from_u64(1);
+        let conf = KMeansConfig::build().random_generator(rnd).build();
+
+        let res = kmean.kmeans_lloyd(2, 1, |kmean: &KMeans<f64>, state: &mut KMeansState<f64>, _| {
+            // p_<array> arrays are padded to p_sample_dims!
+            state.centroids[0] = initial_centroids[0];
+            state.centroids[1] = initial_centroids[1];
+            state.centroids[kmean.p_sample_dims + 0] = initial_centroids[2];
+            state.centroids[kmean.p_sample_dims + 1] = initial_centroids[3];
+        }, &conf);
+        assert_eq!(res.distsum, 0.5);
+        assert_eq!(&res.assignments, &[0,0,1]);
+        assert_eq!(&res.centroids, &[1.5, 0.0, 3.0, 0.0]);
+        assert_eq!(&res.centroid_frequency, &[2,1]);
+        assert_eq!(&res.centroid_distances, &[0.25, 0.25, 0.0]);
     }
 }

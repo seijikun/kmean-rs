@@ -103,6 +103,7 @@ mod abort_strategy;
 
 pub use abort_strategy::AbortStrategy;
 pub use api::{KMeansState, KMeansConfig, KMeansConfigBuilder, KMeans};
+pub use memory::Primitive;
 
 
 #[cfg(test)]
