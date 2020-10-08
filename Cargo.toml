@@ -11,16 +11,11 @@ keywords = ["kmeans", "k-means", "means", "cluster", "clustering"]
 categories = ["algorithms", "science"]
 exclude = ["examples/*"]
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-
 [dependencies]
-packed_simd = "0"
+packed_simd = { version = "0.3.4", package = "packed_simd_2" }
 rayon = "1"
-rand = "0"
-num = "0"
-
-[patch.crates-io]
-packed_simd = { git = "https://github.com/rust-lang-nursery/packed_simd.git", branch = "master" }
+rand = "0.7"
+num = "0.3"
 
 [lib]
 name = "kmeans"
