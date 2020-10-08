@@ -18,10 +18,10 @@ impl Primitive for f64 {}
 
 pub trait SimdWrapper<T> : Sized + Add<Output = Self> + AddAssign + Sub<Output = Self> + SubAssign
                     + Mul<Output = Self> + MulAssign + Div<Output = Self> + DivAssign + Sum where [T;LANES]: SimdArray {
-    #[inline(always)] unsafe fn from_slice_aligned_unchecked(src: &[T]) -> Self;
-    #[inline(always)] unsafe fn write_to_slice_aligned_unchecked(self, slice: &mut [T]);
-    #[inline(always)] fn splat(single: T) -> Self;
-    #[inline(always)] fn sum(self) -> T;
+    unsafe fn from_slice_aligned_unchecked(src: &[T]) -> Self;
+    unsafe fn write_to_slice_aligned_unchecked(self, slice: &mut [T]);
+    fn splat(single: T) -> Self;
+    fn sum(self) -> T;
 }
 macro_rules! impl_simd_wrapper {
     ($simd:ty, $primitive:ty, $lanes:expr) => {
