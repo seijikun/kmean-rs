@@ -12,7 +12,7 @@ categories = ["algorithms", "science"]
 exclude = ["examples/*"]
 
 [dependencies]
-packed_simd = { version = "0.3.4", package = "packed_simd_2" }
+packed_simd = { version = "0.3.9" }
 rayon = "1"
 rand = "0.7"
 num = "0.3"
