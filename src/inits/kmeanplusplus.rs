@@ -3,11 +3,25 @@ use rand::{
     prelude::*,
     distributions::weighted::WeightedIndex
 };
+use std::iter::Sum;
+use std::ops::{Add, Div, Mul, Sub};
+use std::simd::{num::SimdFloat, LaneCount, Simd, SimdElement, SupportedLaneCount};
 use std::ops::DerefMut;
-use packed_simd::{Simd, SimdArray};
 
-#[inline(always)] pub fn calculate<'a, T: Primitive>(kmean: &KMeans<T>, state: &mut KMeansState<T>, config: &KMeansConfig<'a, T>)
-				where T: Primitive, [T;LANES]: SimdArray, Simd<[T;LANES]>: SimdWrapper<T> {
+// TODO
+#[inline(always)] pub fn calculate<'a, T, const LANES: usize>(
+    kmean: &KMeans<T, LANES>,
+    state: &mut KMeansState<T>,
+    config: &KMeansConfig<'a, T>,
+) where
+    T: SimdElement + Copy + Default + Add<Output = T> + Mul<Output = T> + Div<Output = T> + Sub<Output = T> + Sum + Primitive,
+    Simd<T, LANES>: Sub<Output = Simd<T, LANES>>
+        + Add<Output = Simd<T, LANES>>
+        + Mul<Output = Simd<T, LANES>>
+        + Div<Output = Simd<T, LANES>>
+        + Sum
+        + SimdFloat<Scalar = T>,
+    LaneCount<LANES>: SupportedLaneCount, {
 	{ // Randomly select first centroid
 		let first_idx = config.rnd.borrow_mut().gen_range(0..kmean.sample_cnt);
 		state.set_centroid_from_iter(0, kmean.p_samples.iter().skip(first_idx * kmean.p_sample_dims).cloned())
@@ -40,11 +54,21 @@ mod tests {
     use super::*;
 
     #[bench]
-    fn init_kmeanplusplus_f32(b: &mut Bencher) { init_kmeanplusplus::<f32>(b); }
+    fn init_kmeanplusplus_f32(b: &mut Bencher) { init_kmeanplusplus::<f32, 8>(b); }
     #[bench]
-    fn init_kmeanplusplus_f64(b: &mut Bencher) { init_kmeanplusplus::<f64>(b); }
+    fn init_kmeanplusplus_f64(b: &mut Bencher) { init_kmeanplusplus::<f64, 8>(b); }
 
-    fn init_kmeanplusplus<T: Primitive>(b: &mut Bencher) where [T;LANES] : SimdArray, Simd<[T;LANES]>: SimdWrapper<T> {
+    // TODO
+    fn init_kmeanplusplus<T: Primitive, const LANES:usize>(b: &mut Bencher)
+	where
+	T: SimdElement + Copy + Default + Add<Output = T> + Mul<Output = T> + Div<Output = T> + Sub<Output = T> + Sum + Primitive,
+    Simd<T, LANES>: Sub<Output = Simd<T, LANES>>
+        + Add<Output = Simd<T, LANES>>
+        + Mul<Output = Simd<T, LANES>>
+        + Div<Output = Simd<T, LANES>>
+        + Sum
+        + SimdFloat<Scalar = T>,
+	LaneCount<LANES>: SupportedLaneCount {
 		let sample_cnt = 20000;
 		let sample_dims = 16;
 		let k = 32;
@@ -52,8 +76,8 @@ mod tests {
         let mut rnd = rand::rngs::StdRng::seed_from_u64(1337);
         let mut samples = vec![T::zero();sample_cnt * sample_dims];
         samples.iter_mut().for_each(|v| *v = rnd.gen_range(T::zero()..T::one()));
-        let kmean = KMeans::new(samples, sample_cnt, sample_dims);
-        let mut state = KMeansState::new(sample_cnt, kmean.p_sample_dims, k);
+        let kmean: KMeans<_, LANES> = KMeans::new(samples, sample_cnt, sample_dims);
+        let mut state = KMeansState::new::<LANES>(sample_cnt, kmean.p_sample_dims, k);
 		let conf = KMeansConfig::build().random_generator(rnd).build();
 
         b.iter(|| {

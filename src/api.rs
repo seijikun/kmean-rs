@@ -1,8 +1,10 @@
 use crate::{helpers, memory::*, AbortStrategy};
-use std::cell::RefCell;
-use rayon::prelude::*;
+use core::simd::{num::SimdFloat, LaneCount, Simd, SimdElement, SupportedLaneCount};
 use rand::prelude::*;
-use packed_simd::{Simd, SimdArray};
+use rayon::prelude::*;
+use std::cell::RefCell;
+use std::iter::Sum;
+use std::ops::{Add, Div, Mul, Sub};
 
 pub type InitDoneCallbackFn<'a, T> = &'a dyn Fn(&KMeansState<T>);
 pub type IterationDoneCallbackFn<'a, T> = &'a dyn Fn(&KMeansState<T>, usize, T);
@@ -106,14 +108,14 @@ pub struct KMeansState<T: Primitive> {
     pub(crate) sample_dims: usize
 }
 impl<T: Primitive> KMeansState<T> {
-    pub(crate) fn new(sample_cnt: usize, sample_dims: usize, k: usize) -> Self {
+    pub(crate) fn new<const LANES: usize>(sample_cnt: usize, sample_dims: usize, k: usize) -> Self {
         Self {
             k,
             distsum: T::zero(),
-            centroids: AlignedFloatVec::new(sample_dims * k),
-            centroid_frequency: vec![0usize;k],
-            assignments: vec![0usize;sample_cnt],
-            centroid_distances: vec![T::infinity();sample_cnt],
+            centroids: AlignedFloatVec::<LANES>::new(sample_dims * k),
+            centroid_frequency: vec![0usize; k],
+            assignments: vec![0usize; sample_cnt],
+            centroid_distances: vec![T::infinity(); sample_cnt],
             sample_dims
         }
     }
@@ -149,13 +151,37 @@ impl<T: Primitive> KMeansState<T> {
 /// - K-Mean++ [`KMeans::init_kmeanplusplus`]
 /// - Random-Sample [`KMeans::init_random_sample`]
 /// - Random-Partition [`KMeans::init_random_partition`]
-pub struct KMeans<T> where T: Primitive, [T;LANES]: SimdArray, Simd<[T;LANES]>: SimdWrapper<T> {
+pub struct KMeans<T, const LANES: usize>
+where
+    T: SimdElement + Copy + Default + Add<Output = T> + Mul<Output = T> + Sub<Output = T> + Sum,
+    LaneCount<LANES>: SupportedLaneCount,
+{
     pub(crate) sample_cnt: usize,
     pub(crate) sample_dims: usize,
     pub(crate) p_sample_dims: usize,
     pub(crate) p_samples: Vec<T>
 }
-impl<T> KMeans<T> where T: Primitive, [T;LANES]: SimdArray, Simd<[T;LANES]>: SimdWrapper<T> {
+impl<T, const LANES: usize> KMeans<T, LANES>
+where
+    T: SimdElement
+        + Copy
+        + Default
+        + Add<Output = T>
+        + Mul<Output = T>
+        + Div<Output = T>
+        + Sub<Output = T>
+        + Sum
+        + Primitive
+        + num::Zero
+        + num::One,
+    Simd<T, LANES>: Sub<Output = Simd<T, LANES>>
+        + Add<Output = Simd<T, LANES>>
+        + Mul<Output = Simd<T, LANES>>
+        + Div<Output = Simd<T, LANES>>
+        + Sum
+        + SimdFloat<Scalar = T>,
+    LaneCount<LANES>: SupportedLaneCount,
+{
     /// Create a new instance of the [`KMeans`] structure.
     /// 
     /// ## Arguments
@@ -167,20 +193,21 @@ impl<T> KMeans<T> where T: Primitive, [T;LANES]: SimdArray, Simd<[T;LANES]>: Sim
         let p_sample_dims = helpers::multiple_roundup(sample_dims, LANES);
        
         // Recopy into new, properly aligned + padded buffer
-        let mut aligned_samples = AlignedFloatVec::new(sample_cnt * p_sample_dims);
+        let mut aligned_samples = AlignedFloatVec::<LANES>::new(sample_cnt * p_sample_dims);
         if p_sample_dims == sample_dims {
             aligned_samples.copy_from_slice(&samples);
         } else {
             for s in 0..sample_cnt {
                 for d in 0..sample_dims {
-                    aligned_samples[s * p_sample_dims + d] = samples[s * sample_dims + d];
+                    aligned_samples.as_mut_slice()[s * p_sample_dims + d] =
+                        samples[s * sample_dims + d];
                 }
             }
         };
 
         Self {
-            sample_cnt: sample_cnt,
-            sample_dims: sample_dims,
+            sample_cnt,
+            sample_dims,
             p_sample_dims,
             p_samples: aligned_samples
         }
@@ -200,13 +227,19 @@ impl<T> KMeans<T> where T: Primitive, [T;LANES]: SimdArray, Simd<[T;LANES]>: Sim
             .zip(state.assignments.par_iter().cloned())
             .zip(state.centroid_distances.par_iter_mut())
             .for_each(|((s, assignment), centroid_dist)| {
-                let centroid = centroids.chunks_exact(self.p_sample_dims).skip(assignment).next().unwrap();
-                *centroid_dist = s.chunks_exact(LANES).map(|i| unsafe { Simd::<[T;LANES]>::from_slice_aligned_unchecked(i) })
-                    .zip(centroid.chunks_exact(LANES).map(|i| unsafe { Simd::<[T;LANES]>::from_slice_aligned_unchecked(i) }))
-                        .map(|(sp,cp)| sp - cp)         // <sample> - <centroid>
-                        .map(|v| v * v)                 // <vec_components> ^2
-                        .sum::<Simd::<[T;LANES]>>()     // sum(<vec_components>^2)
-                        .sum();
+                let centroid = centroids
+                    .chunks_exact(self.p_sample_dims)
+                    .skip(assignment)
+                    .next()
+                    .unwrap();
+                *centroid_dist = s
+                    .chunks_exact(LANES)
+                    .map(|i| Simd::from_slice(i))
+                    .zip(centroid.chunks_exact(LANES).map(|i| Simd::from_slice(i)))
+                    .map(|(sp, cp)| sp - cp) // <sample> - <centroid>
+                    .map(|v| v * v) // <vec_components> ^2
+                    .sum::<Simd<T, LANES>>() // sum(<vec_components>^2)
+                    .reduce_sum();
             });
     }
 
@@ -226,12 +259,12 @@ impl<T> KMeans<T> where T: Primitive, [T;LANES]: SimdArray, Simd<[T;LANES]>: Sim
             .for_each(|((s, assignment), centroid_dist)| {
                 let (best_idx, best_dist) = centroids.chunks_exact(self.p_sample_dims).take(k)
                     .map(|c| {
-                        s.chunks_exact(LANES).map(|i| unsafe { Simd::<[T;LANES]>::from_slice_aligned_unchecked(i) })
-                            .zip(c.chunks_exact(LANES).map(|i| unsafe { Simd::<[T;LANES]>::from_slice_aligned_unchecked(i) }))
+                        s.chunks_exact(LANES).map(|i| Simd::from_slice(i))
+                            .zip(c.chunks_exact(LANES).map(|i| Simd::from_slice(i)))
                                 .map(|(sp,cp)| sp - cp)         // <sample> - <centroid>
                                 .map(|v| v * v)                 // <vec_components> ^2
-                                .sum::<Simd::<[T;LANES]>>()     // sum(<vec_components>^2)
-                                .sum()
+                                .sum::<Simd<T, LANES>>()        // sum(<vec_components>^2)
+                                .reduce_sum()
                     }).enumerate()
                     .min_by(|(_,d0), (_,d1)| d0.partial_cmp(d1).unwrap()).unwrap();
                 *assignment = best_idx;
@@ -286,7 +319,7 @@ impl<T> KMeans<T> where T: Primitive, [T;LANES]: SimdArray, Simd<[T;LANES]>: Sim
     /// }
     /// ```
     pub fn kmeans_lloyd<'a, F>(&self, k: usize, max_iter: usize, init: F, config: &KMeansConfig<'a, T>) -> KMeansState<T>
-                where for<'c> F: FnOnce(&KMeans<T>, &mut KMeansState<T>, &KMeansConfig<'c, T>) {
+                where for<'c> F: FnOnce(&KMeans<T, LANES>, &mut KMeansState<T>, &KMeansConfig<'c, T>) {
         crate::variants::Lloyd::calculate(&self, k, max_iter, init, config)
     }
 
@@ -323,7 +356,25 @@ impl<T> KMeans<T> where T: Primitive, [T;LANES]: SimdArray, Simd<[T;LANES]>: Sim
     /// }
     /// ```
     pub fn kmeans_minibatch<'a, F>(&self, batch_size: usize, k: usize, max_iter: usize, init: F, config: &KMeansConfig<'a, T>) -> KMeansState<T>
-            where for<'c> F: FnOnce(&KMeans<T>, &mut KMeansState<T>, &KMeansConfig<'c, T>) {
+    where
+        for<'c> F: FnOnce(&KMeans<T, LANES>, &mut KMeansState<T>, &KMeansConfig<'c, T>),
+        T: SimdElement
+            + Copy
+            + Default
+            + Add<Output = T>
+            + Mul<Output = T>
+            + Div<Output = T>
+            + Sub<Output = T>
+            + Sum
+            + Primitive,
+        Simd<T, LANES>: Sub<Output = Simd<T, LANES>>
+            + Add<Output = Simd<T, LANES>>
+            + Mul<Output = Simd<T, LANES>>
+            + Div<Output = Simd<T, LANES>>
+            + Sum
+            + SimdFloat<Scalar = T>,
+        LaneCount<LANES>: SupportedLaneCount,
+    {
         crate::variants::Minibatch::calculate(&self, batch_size, k, max_iter, init, config)
     }
 
@@ -340,7 +391,7 @@ impl<T> KMeans<T> where T: Primitive, [T;LANES]: SimdArray, Simd<[T;LANES]>: Sim
     /// 
     /// ## Note
     /// This method is not meant for direct invocation. Pass a reference to it, to an instance-method of [`KMeans`].
-    pub fn init_kmeanplusplus<'a>(kmean: &KMeans<T>, state: &mut KMeansState<T>, config: &KMeansConfig<'a, T>) {
+    pub fn init_kmeanplusplus<'a>(kmean: &KMeans<T, LANES>, state: &mut KMeansState<T>, config: &KMeansConfig<'a, T>) {
         crate::inits::kmeanplusplus::calculate(kmean, state, config);
     }
 
@@ -350,7 +401,7 @@ impl<T> KMeans<T> where T: Primitive, [T;LANES]: SimdArray, Simd<[T;LANES]>: Sim
     /// This initialization method randomly partitions the samples into k partitions, and then calculates these partion's means.
     /// These means are then used as initial clusters.
     /// 
-    pub fn init_random_partition<'a>(kmean: &KMeans<T>, state: &mut KMeansState<T>, config: &KMeansConfig<'a, T>) {
+    pub fn init_random_partition<'a>(kmean: &KMeans<T, LANES>, state: &mut KMeansState<T>, config: &KMeansConfig<'a, T>) {
         crate::inits::randompartition::calculate(kmean, state, config);
     }
 
@@ -361,7 +412,7 @@ impl<T> KMeans<T> where T: Primitive, [T;LANES]: SimdArray, Simd<[T;LANES]>: Sim
     /// 
     /// ## Note
     /// This method is not meant for direct invocation. Pass a reference to it, to an instance-method of [`KMeans`].
-    pub fn init_random_sample<'a>(kmean: &KMeans<T>, state: &mut KMeansState<T>, config: &KMeansConfig<'a, T>) {
+    pub fn init_random_sample<'a>(kmean: &KMeans<T, LANES>, state: &mut KMeansState<T>, config: &KMeansConfig<'a, T>) {
         crate::inits::randomsample::calculate(kmean, state, config);
     }
 
@@ -385,11 +436,31 @@ mod tests {
     }
 
     fn calculate_cluster_assignments_multiplex(sample_dims: usize) {
-        calculate_cluster_assignments::<f64>(sample_dims, 1e-10f64);
-        calculate_cluster_assignments::<f32>(sample_dims, 1e-5f32);
+        calculate_cluster_assignments::<f64, 8>(sample_dims, 1e-10f64);
+        calculate_cluster_assignments::<f32, 8>(sample_dims, 1e-5f32);
     }
 
-    fn calculate_cluster_assignments<T: Primitive>(sample_dims: usize, max_diff: T) where [T;LANES] : SimdArray, Simd<[T;LANES]>: SimdWrapper<T> {
+    fn calculate_cluster_assignments<T, const LANES: usize>(sample_dims: usize, max_diff: T)
+    where
+    T: SimdElement
+        + Copy
+        + Default
+        + Add<Output = T>
+        + Mul<Output = T>
+        + Div<Output = T>
+        + Sub<Output = T>
+        + Sum
+        + Primitive
+        + num::Zero
+        + num::One,
+    Simd<T, LANES>: Sub<Output = Simd<T, LANES>>
+        + Add<Output = Simd<T, LANES>>
+        + Mul<Output = Simd<T, LANES>>
+        + Div<Output = Simd<T, LANES>>
+        + Sum
+        + SimdFloat<Scalar = T>,
+    LaneCount<LANES>: SupportedLaneCount
+    {
         let sample_cnt = 1000;
         let k = 5;
 
@@ -398,7 +469,7 @@ mod tests {
 
         let kmean = KMeans::new(samples, sample_cnt, sample_dims);
         
-        let mut state = KMeansState::new(kmean.sample_cnt, kmean.p_sample_dims, k);
+        let mut state = KMeansState::new::<LANES>(kmean.sample_cnt, kmean.p_sample_dims, k);
         state.centroids.iter_mut()
             .zip(kmean.p_samples.iter())
             .for_each(|(c,s)| *c = *s);
@@ -436,20 +507,40 @@ mod tests {
     }
 
     #[bench]
-    fn distance_matrix_calculation_benchmark_f64(b: &mut Bencher) { distance_matrix_calculation_benchmark::<f64>(b); }
+    fn distance_matrix_calculation_benchmark_f64(b: &mut Bencher) { distance_matrix_calculation_benchmark::<f64, 8>(b); }
     #[bench]
-    fn distance_matrix_calculation_benchmark_f32(b: &mut Bencher) { distance_matrix_calculation_benchmark::<f32>(b); }
+    fn distance_matrix_calculation_benchmark_f32(b: &mut Bencher) { distance_matrix_calculation_benchmark::<f32, 8>(b); }
 
-    fn distance_matrix_calculation_benchmark<T: Primitive>(b: &mut Bencher) where [T;LANES] : SimdArray, Simd<[T;LANES]>: SimdWrapper<T> {
+    fn distance_matrix_calculation_benchmark<T, const LANES: usize>(b: &mut Bencher)
+    where
+        T: SimdElement
+            + Copy
+            + Default
+            + Add<Output = T>
+            + Mul<Output = T>
+            + Div<Output = T>
+            + Sub<Output = T>
+            + Sum
+            + Primitive
+            + num::Zero
+            + num::One,
+        Simd<T, LANES>: Sub<Output = Simd<T, LANES>>
+            + Add<Output = Simd<T, LANES>>
+            + Mul<Output = Simd<T, LANES>>
+            + Div<Output = Simd<T, LANES>>
+            + Sum
+            + SimdFloat<Scalar = T>,
+        LaneCount<LANES>: SupportedLaneCount,
+    {
         let sample_cnt = 20000;
         let sample_dims = 2000;
-        let k = 8;
+        let k = LANES;
 
         let mut samples = vec![T::zero();sample_cnt * sample_dims];
         samples.iter_mut().for_each(|v| *v = thread_rng().gen_range(T::zero()..T::one()));
-        let kmean = KMeans::new(samples, sample_cnt, sample_dims);
+        let kmean: KMeans<T, LANES> = KMeans::new(samples, sample_cnt, sample_dims);
 
-        let mut state = KMeansState::new(kmean.sample_cnt, kmean.p_sample_dims, k);
+        let mut state = KMeansState::new::<LANES>(kmean.sample_cnt, kmean.p_sample_dims, k);
         state.centroids.iter_mut()
             .zip(kmean.p_samples.iter())
             .for_each(|(c,s)| *c = *s);

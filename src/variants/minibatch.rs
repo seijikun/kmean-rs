@@ -1,8 +1,11 @@
 use crate::{KMeans, KMeansConfig, KMeansState, memory::*};
-use packed_simd::{Simd, SimdArray};
 use rand::prelude::*;
 use rayon::prelude::*;
 use std::ops::{Range, DerefMut};
+use std::iter::Sum;
+use std::ops::{Add, Sub, Mul, Div};
+use std::simd::num::SimdFloat;
+use std::simd::{LaneCount, Simd, SimdElement, SupportedLaneCount};
 
 struct BatchInfo {
 	start_idx: usize,
@@ -14,11 +17,22 @@ impl BatchInfo {
 	}
 }
 
-pub(crate) struct Minibatch<T> where T: Primitive, [T;LANES]: SimdArray, Simd<[T;LANES]>: SimdWrapper<T>{
+pub(crate) struct Minibatch<T, const LANES: usize> where T: Primitive, LaneCount<LANES>: SupportedLaneCount{
 	_p: std::marker::PhantomData<T>
 }
-impl<T> Minibatch<T> where T: Primitive, [T;LANES]: SimdArray, Simd<[T;LANES]>: SimdWrapper<T> {
-	fn update_cluster_assignments<'a>(data: &KMeans<T>, state: &mut KMeansState<T>, batch: &BatchInfo, shuffled_samples: &'a [T], limit_k: Option<usize>) {
+// TODO
+impl<T, const LANES: usize> Minibatch<T, LANES>
+where
+	T: SimdElement + Copy + Default + Add<Output = T> + Mul<Output = T> + Div<Output = T> + Sub<Output = T> + Sum + Primitive,
+	Simd<T, LANES>: Sub<Output = Simd<T, LANES>>
+		+ Add<Output = Simd<T, LANES>>
+		+ Mul<Output = Simd<T, LANES>>
+		+ Div<Output = Simd<T, LANES>>
+		+ Sum
+		+ SimdFloat<Scalar = T>,
+	LaneCount<LANES>: SupportedLaneCount,
+{
+	fn update_cluster_assignments<'a>(data: &KMeans<T, LANES>, state: &mut KMeansState<T>, batch: &BatchInfo, shuffled_samples: &'a [T], limit_k: Option<usize>) {
 		let centroids = &state.centroids;
 		let k = limit_k.unwrap_or(state.k);
 
@@ -34,12 +48,12 @@ impl<T> Minibatch<T> where T: Primitive, [T;LANES]: SimdArray, Simd<[T;LANES]>: 
 			.for_each(|((s, assignment), centroid_dist)| {
 				let (best_idx, best_dist) = centroids.chunks_exact(data.p_sample_dims).take(k)
 					.map(|c| {
-						s.chunks_exact(LANES).map(|i| unsafe { Simd::<[T;LANES]>::from_slice_aligned_unchecked(i) })
-							.zip(c.chunks_exact(LANES).map(|i| unsafe { Simd::<[T;LANES]>::from_slice_aligned_unchecked(i) }))
+						s.chunks_exact(LANES).map(|i| Simd::from_slice(i))
+							.zip(c.chunks_exact(LANES).map(|i| Simd::from_slice(i)))
 								.map(|(sp,cp)| sp - cp)         // <sample> - <centroid>
 								.map(|v| v * v)                 // <vec_components> ^2
-								.sum::<Simd::<[T;LANES]>>()     // sum(<vec_components>^2)
-								.sum()
+								.sum::<Simd::<T,LANES>>()     // sum(<vec_components>^2)
+								.reduce_sum()                   // sum(sum(<vec_components>^2))
 					}).enumerate()
 					.min_by(|(_,d0), (_,d1)| d0.partial_cmp(d1).unwrap()).unwrap();
 				*assignment = best_idx;
@@ -47,7 +61,7 @@ impl<T> Minibatch<T> where T: Primitive, [T;LANES]: SimdArray, Simd<[T;LANES]>: 
 			});
 	}
 
-	fn update_centroids<'a>(data: &KMeans<T>, state: &mut KMeansState<T>, batch: &BatchInfo, shuffled_samples: &'a [T]) {
+	fn update_centroids<'a>(data: &KMeans<T, LANES>, state: &mut KMeansState<T>, batch: &BatchInfo, shuffled_samples: &'a [T]) {
 		let centroid_frequency = &mut state.centroid_frequency;
 		let centroids = &mut state.centroids;
 		let assignments = &state.assignments;
@@ -66,11 +80,11 @@ impl<T> Minibatch<T> where T: Primitive, [T;LANES]: SimdArray, Simd<[T;LANES]>: 
 			});
 	}
 
-	fn shuffle_samples<'a>(data: &KMeans<T>, config: &KMeansConfig<'a, T>) -> (Vec<usize>, Vec<T>) {
+	fn shuffle_samples<'a>(data: &KMeans<T, LANES>, config: &KMeansConfig<'a, T>) -> (Vec<usize>, Vec<T>) {
 		let mut idxs: Vec<usize> = (0..data.sample_cnt).collect();
 		idxs.shuffle(config.rnd.borrow_mut().deref_mut());
 
-		let mut shuffled_samples = AlignedFloatVec::new_uninitialized(data.p_samples.len());
+		let mut shuffled_samples = AlignedFloatVec::<LANES>::new_uninitialized(data.p_samples.len());
 		shuffled_samples.chunks_exact_mut(data.p_sample_dims)
 			.zip(idxs.iter().map(|i| &data.p_samples[(i * data.p_sample_dims)..(i * data.p_sample_dims) + data.p_sample_dims] ))
 			.for_each(|(dst, src)| {
@@ -87,8 +101,8 @@ impl<T> Minibatch<T> where T: Primitive, [T;LANES]: SimdArray, Simd<[T;LANES]>: 
 		}
 	}
 
-	#[inline(always)] pub fn calculate<'a, F>(data: &KMeans<T>, batch_size: usize, k: usize, max_iter: usize, init: F, config: &KMeansConfig<'a, T>) -> KMeansState<T>
-				where for<'c> F: FnOnce(&KMeans<T>, &mut KMeansState<T>, &KMeansConfig<'c, T>) {
+	#[inline(always)] pub fn calculate<'a, F>(data: &KMeans<T, LANES>, batch_size: usize, k: usize, max_iter: usize, init: F, config: &KMeansConfig<'a, T>) -> KMeansState<T>
+				where for<'c> F: FnOnce(&KMeans<T, LANES>, &mut KMeansState<T>, &KMeansConfig<'c, T>) {
 		assert!(k <= data.sample_cnt);
 		assert!(batch_size <= data.sample_cnt);
 
@@ -96,7 +110,7 @@ impl<T> Minibatch<T> where T: Primitive, [T;LANES]: SimdArray, Simd<[T;LANES]>: 
 		let (shuffle_idxs, shuffled_samples) = Self::shuffle_samples(data, config);
 
 
-		let mut state = KMeansState::new(data.sample_cnt, data.p_sample_dims, k);
+		let mut state = KMeansState::new::<LANES>(data.sample_cnt, data.p_sample_dims, k);
         state.distsum = T::infinity();
 
 		// Initialize clusters and notify subscriber
@@ -111,7 +125,7 @@ impl<T> Minibatch<T> where T: Primitive, [T;LANES]: SimdArray, Simd<[T;LANES]>: 
 			// Only shuffle a beginning index for a consecutive block within the shuffled samples as batch
 			let batch = BatchInfo {
 				batch_size,
-				start_idx: config.rnd.borrow_mut().gen_range(0, data.sample_cnt - batch_size)
+				start_idx: config.rnd.borrow_mut().gen_range(0..data.sample_cnt - batch_size)
 			};
 
 			Self::update_cluster_assignments(data, &mut state, &batch, &shuffled_samples, None);
@@ -157,7 +171,7 @@ mod tests {
     fn iris_dataset_f64() where {
         let samples = vec![1.4f64, 0.2, 1.4, 0.2, 1.3, 0.2, 1.5, 0.2, 1.4, 0.2, 1.7, 0.4, 1.4, 0.3, 1.5, 0.2, 1.4, 0.2, 1.5, 0.1, 1.5, 0.2, 1.6, 0.2, 1.4, 0.1, 1.1, 0.1, 1.2, 0.2, 1.5, 0.4, 1.3, 0.4, 1.4, 0.3, 1.7, 0.3, 1.5, 0.3, 1.7, 0.2, 1.5, 0.4, 1.0, 0.2, 1.7, 0.5, 1.9, 0.2, 1.6, 0.2, 1.6, 0.4, 1.5, 0.2, 1.4, 0.2, 1.6, 0.2, 1.6, 0.2, 1.5, 0.4, 1.5, 0.1, 1.4, 0.2, 1.5, 0.2, 1.2, 0.2, 1.3, 0.2, 1.4, 0.1, 1.3, 0.2, 1.5, 0.2, 1.3, 0.3, 1.3, 0.3, 1.3, 0.2, 1.6, 0.6, 1.9, 0.4, 1.4, 0.3, 1.6, 0.2, 1.4, 0.2, 1.5, 0.2, 1.4, 0.2, 4.7, 1.4, 4.5, 1.5, 4.9, 1.5, 4.0, 1.3, 4.6, 1.5, 4.5, 1.3, 4.7, 1.6, 3.3, 1.0, 4.6, 1.3, 3.9, 1.4, 3.5, 1.0, 4.2, 1.5, 4.0, 1.0, 4.7, 1.4, 3.6, 1.3, 4.4, 1.4, 4.5, 1.5, 4.1, 1.0, 4.5, 1.5, 3.9, 1.1, 4.8, 1.8, 4.0, 1.3, 4.9, 1.5, 4.7, 1.2, 4.3, 1.3, 4.4, 1.4, 4.8, 1.4, 5.0, 1.7, 4.5, 1.5, 3.5, 1.0, 3.8, 1.1, 3.7, 1.0, 3.9, 1.2, 5.1, 1.6, 4.5, 1.5, 4.5, 1.6, 4.7, 1.5, 4.4, 1.3, 4.1, 1.3, 4.0, 1.3, 4.4, 1.2, 4.6, 1.4, 4.0, 1.2, 3.3, 1.0, 4.2, 1.3, 4.2, 1.2, 4.2, 1.3, 4.3, 1.3, 3.0, 1.1, 4.1, 1.3, 6.0, 2.5, 5.1, 1.9, 5.9, 2.1, 5.6, 1.8, 5.8, 2.2, 6.6, 2.1, 4.5, 1.7, 6.3, 1.8, 5.8, 1.8, 6.1, 2.5, 5.1, 2.0, 5.3, 1.9, 5.5, 2.1, 5.0, 2.0, 5.1, 2.4, 5.3, 2.3, 5.5, 1.8, 6.7, 2.2, 6.9, 2.3, 5.0, 1.5, 5.7, 2.3, 4.9, 2.0, 6.7, 2.0, 4.9, 1.8, 5.7, 2.1, 6.0, 1.8, 4.8, 1.8, 4.9, 1.8, 5.6, 2.1, 5.8, 1.6, 6.1, 1.9, 6.4, 2.0, 5.6, 2.2, 5.1, 1.5, 5.6, 1.4, 6.1, 2.3, 5.6, 2.4, 5.5, 1.8, 4.8, 1.8, 5.4, 2.1, 5.6, 2.4, 5.1, 2.3, 5.1, 1.9, 5.9, 2.3, 5.7, 2.5, 5.2, 2.3, 5.0, 1.9, 5.2, 2.0, 5.4, 2.3, 5.1, 1.8];
 
-        let kmean = KMeans::new(samples, 150, 2);
+        let kmean: KMeans<f64, 8> = KMeans::new(samples, 150, 2);
         let rnd = rand::rngs::StdRng::seed_from_u64(1);
 		let conf = KMeansConfig::build()
 			.random_generator(rnd)
@@ -174,7 +188,7 @@ mod tests {
 		let should_centroid_frequency = vec![59, 41, 50];
 
         assert_eq!(res.distsum, 32.582058324288155);
-        assert_eq!(res.sample_dims, LANES);
+        assert_eq!(res.sample_dims, 8);
         assert_eq!(res.assignments, should_assignments);
         assert_eq!(res.centroid_distances, should_centroid_distances);
         assert_eq!(res.centroids, should_centroids);
@@ -185,7 +199,7 @@ mod tests {
     fn iris_dataset_f32() where {
         let samples = vec![1.4f32, 0.2, 1.4, 0.2, 1.3, 0.2, 1.5, 0.2, 1.4, 0.2, 1.7, 0.4, 1.4, 0.3, 1.5, 0.2, 1.4, 0.2, 1.5, 0.1, 1.5, 0.2, 1.6, 0.2, 1.4, 0.1, 1.1, 0.1, 1.2, 0.2, 1.5, 0.4, 1.3, 0.4, 1.4, 0.3, 1.7, 0.3, 1.5, 0.3, 1.7, 0.2, 1.5, 0.4, 1.0, 0.2, 1.7, 0.5, 1.9, 0.2, 1.6, 0.2, 1.6, 0.4, 1.5, 0.2, 1.4, 0.2, 1.6, 0.2, 1.6, 0.2, 1.5, 0.4, 1.5, 0.1, 1.4, 0.2, 1.5, 0.2, 1.2, 0.2, 1.3, 0.2, 1.4, 0.1, 1.3, 0.2, 1.5, 0.2, 1.3, 0.3, 1.3, 0.3, 1.3, 0.2, 1.6, 0.6, 1.9, 0.4, 1.4, 0.3, 1.6, 0.2, 1.4, 0.2, 1.5, 0.2, 1.4, 0.2, 4.7, 1.4, 4.5, 1.5, 4.9, 1.5, 4.0, 1.3, 4.6, 1.5, 4.5, 1.3, 4.7, 1.6, 3.3, 1.0, 4.6, 1.3, 3.9, 1.4, 3.5, 1.0, 4.2, 1.5, 4.0, 1.0, 4.7, 1.4, 3.6, 1.3, 4.4, 1.4, 4.5, 1.5, 4.1, 1.0, 4.5, 1.5, 3.9, 1.1, 4.8, 1.8, 4.0, 1.3, 4.9, 1.5, 4.7, 1.2, 4.3, 1.3, 4.4, 1.4, 4.8, 1.4, 5.0, 1.7, 4.5, 1.5, 3.5, 1.0, 3.8, 1.1, 3.7, 1.0, 3.9, 1.2, 5.1, 1.6, 4.5, 1.5, 4.5, 1.6, 4.7, 1.5, 4.4, 1.3, 4.1, 1.3, 4.0, 1.3, 4.4, 1.2, 4.6, 1.4, 4.0, 1.2, 3.3, 1.0, 4.2, 1.3, 4.2, 1.2, 4.2, 1.3, 4.3, 1.3, 3.0, 1.1, 4.1, 1.3, 6.0, 2.5, 5.1, 1.9, 5.9, 2.1, 5.6, 1.8, 5.8, 2.2, 6.6, 2.1, 4.5, 1.7, 6.3, 1.8, 5.8, 1.8, 6.1, 2.5, 5.1, 2.0, 5.3, 1.9, 5.5, 2.1, 5.0, 2.0, 5.1, 2.4, 5.3, 2.3, 5.5, 1.8, 6.7, 2.2, 6.9, 2.3, 5.0, 1.5, 5.7, 2.3, 4.9, 2.0, 6.7, 2.0, 4.9, 1.8, 5.7, 2.1, 6.0, 1.8, 4.8, 1.8, 4.9, 1.8, 5.6, 2.1, 5.8, 1.6, 6.1, 1.9, 6.4, 2.0, 5.6, 2.2, 5.1, 1.5, 5.6, 1.4, 6.1, 2.3, 5.6, 2.4, 5.5, 1.8, 4.8, 1.8, 5.4, 2.1, 5.6, 2.4, 5.1, 2.3, 5.1, 1.9, 5.9, 2.3, 5.7, 2.5, 5.2, 2.3, 5.0, 1.9, 5.2, 2.0, 5.4, 2.3, 5.1, 1.8];
 
-        let kmean = KMeans::new(samples, 150, 2);
+        let kmean: KMeans<f32, 8> = KMeans::new(samples, 150, 2);
         let rnd = rand::rngs::StdRng::seed_from_u64(1);
 		let conf = KMeansConfig::build()
 			.random_generator(rnd)
@@ -202,7 +216,7 @@ mod tests {
 		let should_centroid_frequency = vec![56, 50, 44];
 
         assert_eq!(res.distsum, 31.732794);
-        assert_eq!(res.sample_dims, LANES);
+        assert_eq!(res.sample_dims, 8);
         assert_eq!(res.assignments, should_assignments);
         assert_eq!(res.centroid_distances, should_centroid_distances);
         assert_eq!(res.centroids, should_centroids);
