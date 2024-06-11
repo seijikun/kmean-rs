@@ -19,7 +19,7 @@ fn main() {
 		.build();
 
     // Calculate kmeans, using kmean++ as initialization-method
-    let kmean = KMeans::new(samples, sample_cnt, sample_dims);
+    let kmean: KMeans<f64, 8> = KMeans::new(samples, sample_cnt, sample_dims);
     let result = kmean.kmeans_minibatch(4, k, max_iter, KMeans::init_random_sample, &conf);
 
     println!("Centroids: {:?}", result.centroids);

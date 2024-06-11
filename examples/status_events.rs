@@ -9,13 +9,13 @@ fn main() {
 
 	let conf = KMeansConfig::build()
 		.init_done(&|_| println!("Initialization completed."))
-		.iteration_done(&|s, nr, new_distsum|
+		.iteration_done(&|s: &KMeansState<f64>, nr: usize, new_distsum: f64|
 			println!("Iteration {} - Error: {:.2} -> {:.2} | Improvement: {:.2}",
 				nr, s.distsum, new_distsum, s.distsum - new_distsum))
 		.build();
 
     // Calculate kmeans, using kmean++ as initialization-method
-    let kmean = KMeans::new(samples, sample_cnt, sample_dims);
+    let kmean: KMeans<f64, 8> = KMeans::new(samples, sample_cnt, sample_dims);
     let result = kmean.kmeans_minibatch(4, k, max_iter, KMeans::init_random_sample, &conf);
 
     println!("Centroids: {:?}", result.centroids);
