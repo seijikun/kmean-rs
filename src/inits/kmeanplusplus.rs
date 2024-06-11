@@ -9,7 +9,7 @@ use packed_simd::{Simd, SimdArray};
 #[inline(always)] pub fn calculate<'a, T: Primitive>(kmean: &KMeans<T>, state: &mut KMeansState<T>, config: &KMeansConfig<'a, T>)
 				where T: Primitive, [T;LANES]: SimdArray, Simd<[T;LANES]>: SimdWrapper<T> {
 	{ // Randomly select first centroid
-		let first_idx = config.rnd.borrow_mut().gen_range(0, kmean.sample_cnt);
+		let first_idx = config.rnd.borrow_mut().gen_range(0..kmean.sample_cnt);
 		state.set_centroid_from_iter(0, kmean.p_samples.iter().skip(first_idx * kmean.p_sample_dims).cloned())
 	}
 	for k in 1..state.k { // For each following centroid...
@@ -51,7 +51,7 @@ mod tests {
 		
         let mut rnd = rand::rngs::StdRng::seed_from_u64(1337);
         let mut samples = vec![T::zero();sample_cnt * sample_dims];
-        samples.iter_mut().for_each(|v| *v = rnd.gen_range(T::zero(), T::one()));
+        samples.iter_mut().for_each(|v| *v = rnd.gen_range(T::zero()..T::one()));
         let kmean = KMeans::new(samples, sample_cnt, sample_dims);
         let mut state = KMeansState::new(sample_cnt, kmean.p_sample_dims, k);
 		let conf = KMeansConfig::build().random_generator(rnd).build();
