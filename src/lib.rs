@@ -126,7 +126,7 @@ mod tests {
                     where [T;LANES] : SimdArray, Simd<[T;LANES]>: SimdWrapper<T> {
         let mut rnd = rand::rngs::StdRng::seed_from_u64(1337);
         let mut samples = vec![T::zero();sample_cnt * sample_dims];
-        samples.iter_mut().for_each(|v| *v = rnd.gen_range(T::zero(), T::one()));
+        samples.iter_mut().for_each(|v| *v = rnd.gen_range(T::zero()..T::one()));
         let kmean = KMeans::new(samples, sample_cnt, sample_dims);
         let conf = KMeansConfig::build().random_generator(rnd).build();
         b.iter(|| {
@@ -146,7 +146,7 @@ mod tests {
                     where [T;LANES] : SimdArray, Simd<[T;LANES]>: SimdWrapper<T> {
         let mut rnd = rand::rngs::StdRng::seed_from_u64(1337);
         let mut samples = vec![T::zero();sample_cnt * sample_dims];
-        samples.iter_mut().for_each(|v| *v = rnd.gen_range(T::zero(), T::one()));
+        samples.iter_mut().for_each(|v| *v = rnd.gen_range(T::zero()..T::one()));
         let kmean = KMeans::new(samples, sample_cnt, sample_dims);
         let conf = KMeansConfig::build().random_generator(rnd).build();
         b.iter(|| {
