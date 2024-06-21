@@ -416,7 +416,13 @@ mod tests {
 
     fn calculate_cluster_assignments_multiplex(sample_dims: usize) {
         calculate_cluster_assignments::<f64, 8>(sample_dims, 1e-10f64);
+        calculate_cluster_assignments::<f64, 4>(sample_dims, 1e-10f64);
+        calculate_cluster_assignments::<f64, 2>(sample_dims, 1e-10f64);
+
+        calculate_cluster_assignments::<f32, 16>(sample_dims, 1e-5f32);
         calculate_cluster_assignments::<f32, 8>(sample_dims, 1e-5f32);
+        calculate_cluster_assignments::<f32, 4>(sample_dims, 1e-5f32);
+        calculate_cluster_assignments::<f32, 2>(sample_dims, 1e-5f32);
     }
 
     fn calculate_cluster_assignments<T, const LANES: usize>(sample_dims: usize, max_diff: T)
@@ -473,9 +479,20 @@ mod tests {
     }
 
     #[bench]
-    fn distance_matrix_calculation_benchmark_f64(b: &mut Bencher) { distance_matrix_calculation_benchmark::<f64, 8>(b); }
+    fn distance_matrix_calculation_benchmark_f64x8(b: &mut Bencher) { distance_matrix_calculation_benchmark::<f64, 8>(b); }
     #[bench]
-    fn distance_matrix_calculation_benchmark_f32(b: &mut Bencher) { distance_matrix_calculation_benchmark::<f32, 8>(b); }
+    fn distance_matrix_calculation_benchmark_f64x4(b: &mut Bencher) { distance_matrix_calculation_benchmark::<f64, 4>(b); }
+    #[bench]
+    fn distance_matrix_calculation_benchmark_f64x2(b: &mut Bencher) { distance_matrix_calculation_benchmark::<f64, 2>(b); }
+
+    #[bench]
+    fn distance_matrix_calculation_benchmark_f32x16(b: &mut Bencher) { distance_matrix_calculation_benchmark::<f32, 16>(b); }
+    #[bench]
+    fn distance_matrix_calculation_benchmark_f32x8(b: &mut Bencher) { distance_matrix_calculation_benchmark::<f32, 8>(b); }
+    #[bench]
+    fn distance_matrix_calculation_benchmark_f32x4(b: &mut Bencher) { distance_matrix_calculation_benchmark::<f32, 4>(b); }
+    #[bench]
+    fn distance_matrix_calculation_benchmark_f32x2(b: &mut Bencher) { distance_matrix_calculation_benchmark::<f32, 2>(b); }
 
     fn distance_matrix_calculation_benchmark<T, const LANES: usize>(b: &mut Bencher)
     where

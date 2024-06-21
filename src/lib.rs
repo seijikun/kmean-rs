@@ -114,21 +114,22 @@ mod tests {
     use test::Bencher;
 
     #[bench]
-    fn complete_benchmark_lloyd_small_f64(b: &mut Bencher) { complete_benchmark_lloyd::<f64, 8>(b, 200, 2000, 10, 32); }
+    fn complete_benchmark_lloyd_small_f64x8(b: &mut Bencher) { complete_benchmark_lloyd::<f64, 8>(b, 200, 2000, 10, 32); }
     #[bench]
-    fn complete_benchmark_lloyd_mid_f64(b: &mut Bencher) { complete_benchmark_lloyd::<f64, 8>(b, 2000, 200, 10, 32); }
+    fn complete_benchmark_lloyd_mid_f64x8(b: &mut Bencher) { complete_benchmark_lloyd::<f64, 8>(b, 2000, 200, 10, 32); }
     #[bench]
-    fn complete_benchmark_lloyd_big_f64(b: &mut Bencher) { complete_benchmark_lloyd::<f64, 8>(b, 10000, 8, 10, 32); }
+    fn complete_benchmark_lloyd_big_f64x8(b: &mut Bencher) { complete_benchmark_lloyd::<f64, 8>(b, 10000, 8, 10, 32); }
     #[bench]
-    fn complete_benchmark_lloyd_huge_f64(b: &mut Bencher) { complete_benchmark_lloyd::<f64, 8>(b, 20000, 256, 1, 32); }
+    fn complete_benchmark_lloyd_huge_f64x8(b: &mut Bencher) { complete_benchmark_lloyd::<f64, 8>(b, 20000, 256, 1, 32); }
+
     #[bench]
-    fn complete_benchmark_lloyd_small_f32(b: &mut Bencher) { complete_benchmark_lloyd::<f32, 8>(b, 200, 2000, 10, 32); }
+    fn complete_benchmark_lloyd_small_f32x8(b: &mut Bencher) { complete_benchmark_lloyd::<f32, 8>(b, 200, 2000, 10, 32); }
     #[bench]
-    fn complete_benchmark_lloyd_mid_f32(b: &mut Bencher) { complete_benchmark_lloyd::<f32, 8>(b, 2000, 200, 10, 32); }
+    fn complete_benchmark_lloyd_mid_f32x8(b: &mut Bencher) { complete_benchmark_lloyd::<f32, 8>(b, 2000, 200, 10, 32); }
     #[bench]
-    fn complete_benchmark_lloyd_big_f32(b: &mut Bencher) { complete_benchmark_lloyd::<f32, 8>(b, 10000, 8, 10, 32); }
+    fn complete_benchmark_lloyd_big_f32x8(b: &mut Bencher) { complete_benchmark_lloyd::<f32, 8>(b, 10000, 8, 10, 32); }
     #[bench]
-    fn complete_benchmark_lloyd_huge_f32(b: &mut Bencher) { complete_benchmark_lloyd::<f32, 8>(b, 20000, 256, 1, 32); }
+    fn complete_benchmark_lloyd_huge_f32x8(b: &mut Bencher) { complete_benchmark_lloyd::<f32, 8>(b, 20000, 256, 1, 32); }
 
     fn complete_benchmark_lloyd<T: Primitive, const LANES: usize>(
         b: &mut Bencher, sample_cnt: usize, sample_dims: usize, max_iter: usize, k: usize,
@@ -146,21 +147,21 @@ mod tests {
     }
 
     #[bench]
-    fn complete_benchmark_minibatch_small_f64(b: &mut Bencher) { complete_benchmark_minibatch::<f64, 8>(b, 30, 200, 2000, 100, 32); }
+    fn complete_benchmark_minibatch_small_f64x8(b: &mut Bencher) { complete_benchmark_minibatch::<f64, 8>(b, 30, 200, 2000, 100, 32); }
     #[bench]
-    fn complete_benchmark_minibatch_mid_f64(b: &mut Bencher) { complete_benchmark_minibatch::<f64, 8>(b, 200, 2000, 200, 100, 32); }
+    fn complete_benchmark_minibatch_mid_f64x8(b: &mut Bencher) { complete_benchmark_minibatch::<f64, 8>(b, 200, 2000, 200, 100, 32); }
     #[bench]
-    fn complete_benchmark_minibatch_big_f64(b: &mut Bencher) { complete_benchmark_minibatch::<f64, 8>(b, 1000, 10000, 8, 100, 32); }
+    fn complete_benchmark_minibatch_big_f64x8(b: &mut Bencher) { complete_benchmark_minibatch::<f64, 8>(b, 1000, 10000, 8, 100, 32); }
     #[bench]
-    fn complete_benchmark_minibatch_huge_f64(b: &mut Bencher) { complete_benchmark_minibatch::<f64, 8>(b, 2000, 20000, 256, 30, 32); }
+    fn complete_benchmark_minibatch_huge_f64x8(b: &mut Bencher) { complete_benchmark_minibatch::<f64, 8>(b, 2000, 20000, 256, 30, 32); }
     #[bench]
-    fn complete_benchmark_minibatch_small_f32(b: &mut Bencher) { complete_benchmark_minibatch::<f32, 8>(b, 30, 200, 2000, 100, 32); }
+    fn complete_benchmark_minibatch_small_f32x8(b: &mut Bencher) { complete_benchmark_minibatch::<f32, 8>(b, 30, 200, 2000, 100, 32); }
     #[bench]
-    fn complete_benchmark_minibatch_mid_f32(b: &mut Bencher) { complete_benchmark_minibatch::<f32, 8>(b, 200, 2000, 200, 100, 32); }
+    fn complete_benchmark_minibatch_mid_f32x8(b: &mut Bencher) { complete_benchmark_minibatch::<f32, 8>(b, 200, 2000, 200, 100, 32); }
     #[bench]
-    fn complete_benchmark_minibatch_big_f32(b: &mut Bencher) { complete_benchmark_minibatch::<f32, 8>(b, 1000, 10000, 8, 100, 32); }
+    fn complete_benchmark_minibatch_big_f32x8(b: &mut Bencher) { complete_benchmark_minibatch::<f32, 8>(b, 1000, 10000, 8, 100, 32); }
     #[bench]
-    fn complete_benchmark_minibatch_huge_f32(b: &mut Bencher) { complete_benchmark_minibatch::<f32, 8>(b, 2000, 20000, 256, 30, 32); }
+    fn complete_benchmark_minibatch_huge_f32x8(b: &mut Bencher) { complete_benchmark_minibatch::<f32, 8>(b, 2000, 20000, 256, 30, 32); }
 
     fn complete_benchmark_minibatch<T: Primitive, const LANES: usize>(
         b: &mut Bencher, batch_size: usize, sample_cnt: usize, sample_dims: usize, max_iter: usize, k: usize,

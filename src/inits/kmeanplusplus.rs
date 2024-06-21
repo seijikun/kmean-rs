@@ -41,9 +41,20 @@ mod tests {
     use test::Bencher;
 
     #[bench]
-    fn init_kmeanplusplus_f32(b: &mut Bencher) { init_kmeanplusplus::<f32, 8>(b); }
+    fn init_kmeanplusplus_f32x16(b: &mut Bencher) { init_kmeanplusplus::<f32, 16>(b); }
     #[bench]
-    fn init_kmeanplusplus_f64(b: &mut Bencher) { init_kmeanplusplus::<f64, 8>(b); }
+    fn init_kmeanplusplus_f32x8(b: &mut Bencher) { init_kmeanplusplus::<f32, 8>(b); }
+    #[bench]
+    fn init_kmeanplusplus_f32x4(b: &mut Bencher) { init_kmeanplusplus::<f32, 4>(b); }
+    #[bench]
+    fn init_kmeanplusplus_f32x2(b: &mut Bencher) { init_kmeanplusplus::<f32, 2>(b); }
+
+    #[bench]
+    fn init_kmeanplusplus_f64x8(b: &mut Bencher) { init_kmeanplusplus::<f64, 8>(b); }
+    #[bench]
+    fn init_kmeanplusplus_f64x4(b: &mut Bencher) { init_kmeanplusplus::<f64, 4>(b); }
+    #[bench]
+    fn init_kmeanplusplus_f64x2(b: &mut Bencher) { init_kmeanplusplus::<f64, 2>(b); }
 
     fn init_kmeanplusplus<T: Primitive, const LANES: usize>(b: &mut Bencher)
     where
