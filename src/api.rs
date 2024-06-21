@@ -393,6 +393,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use helpers::testing;
     use test::Bencher;
 
     #[test]
