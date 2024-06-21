@@ -20,7 +20,7 @@ where
         // Sum all samples in a cluster together into new_centroids
         // Count non-empty clusters
         let mut used_centroids_cnt = 0;
-        let mut new_centroids = AlignedFloatVec::<LANES>::new(state.centroids.len());
+        let mut new_centroids = AlignedFloatVec::<LANES>::create(state.centroids.len());
         let mut new_distsum = T::zero();
 
         let (centroid_frequency, assignments, centroid_distances) =
@@ -42,7 +42,7 @@ where
                             .for_each(|(c, s)| {
                                 let c_simd = Simd::from_slice(c);
                                 let result = c_simd + s;
-                                c.copy_from_slice(&*result.as_array());
+                                c.copy_from_slice(result.as_array());
                             });
                     });
             });
@@ -60,8 +60,8 @@ where
             for i in 0..state.k {
                 if state.centroid_frequency[i] == 0 {
                     // Find the sample with the highest distance to its centroid, that is not alone in its cluster
-                    let mut sample_id = std::usize::MAX;
-                    let mut prev_centroid_id = std::usize::MAX;
+                    let mut sample_id = usize::MAX;
+                    let mut prev_centroid_id = usize::MAX;
                     for j in (0..data.sample_cnt).rev() {
                         sample_id = distance_sorted_samples[j];
                         prev_centroid_id = state.assignments[sample_id];
@@ -69,7 +69,7 @@ where
                             break;
                         }
                     }
-                    assert!(sample_id != std::usize::MAX && prev_centroid_id != std::usize::MAX);
+                    assert!(sample_id != usize::MAX && prev_centroid_id != usize::MAX);
                     // Re-Assign found sample to centroid without any samples
                     state.centroid_frequency[prev_centroid_id] -= 1;
                     state.centroid_frequency[i] += 1;
@@ -111,14 +111,14 @@ where
                     .zip(nc.chunks_exact(LANES).map(|v| Simd::<T, LANES>::from_slice(v)))
                     .for_each(|(c, nc)| {
                         let nc_div_cfreq = nc / cfreq_simd;
-                        c.copy_from_slice(&*nc_div_cfreq.as_array());
+                        c.copy_from_slice(nc_div_cfreq.as_array());
                     });
             });
         new_distsum
     }
 
     #[inline(always)]
-    pub fn calculate<'a, F>(data: &KMeans<T, LANES>, k: usize, max_iter: usize, init: F, config: &KMeansConfig<'a, T>) -> KMeansState<T>
+    pub fn calculate<F>(data: &KMeans<T, LANES>, k: usize, max_iter: usize, init: F, config: &KMeansConfig<'_, T>) -> KMeansState<T>
     where
         for<'c> F: FnOnce(&KMeans<T, LANES>, &mut KMeansState<T>, &KMeansConfig<'c, T>),
     {
@@ -128,7 +128,7 @@ where
         state.distsum = T::infinity();
 
         // Initialize clusters and notify subscriber
-        init(&data, &mut state, config);
+        init(data, &mut state, config);
         (config.init_done)(&state);
         let mut abort_strategy = config.abort_strategy.create_logic();
 

@@ -32,8 +32,8 @@ where
     LaneCount<LANES>: SupportedLaneCount,
     Simd<T, LANES>: SupportedSimdArray<T, LANES>,
 {
-    fn update_cluster_assignments<'a>(
-        data: &KMeans<T, LANES>, state: &mut KMeansState<T>, batch: &BatchInfo, shuffled_samples: &'a [T], limit_k: Option<usize>,
+    fn update_cluster_assignments(
+        data: &KMeans<T, LANES>, state: &mut KMeansState<T>, batch: &BatchInfo, shuffled_samples: &[T], limit_k: Option<usize>,
     ) {
         let centroids = &state.centroids;
         let k = limit_k.unwrap_or(state.k);
@@ -69,7 +69,7 @@ where
             });
     }
 
-    fn update_centroids<'a>(data: &KMeans<T, LANES>, state: &mut KMeansState<T>, batch: &BatchInfo, shuffled_samples: &'a [T]) {
+    fn update_centroids(data: &KMeans<T, LANES>, state: &mut KMeansState<T>, batch: &BatchInfo, shuffled_samples: &[T]) {
         let centroid_frequency = &mut state.centroid_frequency;
         let centroids = &mut state.centroids;
         let assignments = &state.assignments;
@@ -92,11 +92,11 @@ where
             });
     }
 
-    fn shuffle_samples<'a>(data: &KMeans<T, LANES>, config: &KMeansConfig<'a, T>) -> (Vec<usize>, Vec<T>) {
+    fn shuffle_samples(data: &KMeans<T, LANES>, config: &KMeansConfig<'_, T>) -> (Vec<usize>, Vec<T>) {
         let mut idxs: Vec<usize> = (0..data.sample_cnt).collect();
         idxs.shuffle(config.rnd.borrow_mut().deref_mut());
 
-        let mut shuffled_samples = AlignedFloatVec::<LANES>::new_uninitialized(data.p_samples.len());
+        let mut shuffled_samples = AlignedFloatVec::<LANES>::create_uninitialized(data.p_samples.len());
         shuffled_samples
             .chunks_exact_mut(data.p_sample_dims)
             .zip(
@@ -118,8 +118,8 @@ where
     }
 
     #[inline(always)]
-    pub fn calculate<'a, F>(
-        data: &KMeans<T, LANES>, batch_size: usize, k: usize, max_iter: usize, init: F, config: &KMeansConfig<'a, T>,
+    pub fn calculate<F>(
+        data: &KMeans<T, LANES>, batch_size: usize, k: usize, max_iter: usize, init: F, config: &KMeansConfig<'_, T>,
     ) -> KMeansState<T>
     where
         for<'c> F: FnOnce(&KMeans<T, LANES>, &mut KMeansState<T>, &KMeansConfig<'c, T>),
@@ -134,7 +134,7 @@ where
         state.distsum = T::infinity();
 
         // Initialize clusters and notify subscriber
-        init(&data, &mut state, config);
+        init(data, &mut state, config);
         (config.init_done)(&state);
         let mut abort_strategy = config.abort_strategy.create_logic();
 

@@ -6,7 +6,7 @@ use std::ops::DerefMut;
 use std::simd::{LaneCount, Simd, SupportedLaneCount};
 
 #[inline(always)]
-pub fn calculate<'a, T, const LANES: usize>(kmean: &KMeans<T, LANES>, state: &mut KMeansState<T>, config: &KMeansConfig<'a, T>)
+pub fn calculate<T, const LANES: usize>(kmean: &KMeans<T, LANES>, state: &mut KMeansState<T>, config: &KMeansConfig<'_, T>)
 where
     T: Primitive,
     LaneCount<LANES>: SupportedLaneCount,

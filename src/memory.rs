@@ -73,7 +73,7 @@ where
 
 pub(crate) struct AlignedFloatVec<const LANES: usize>;
 impl<const LANES: usize> AlignedFloatVec<LANES> {
-    pub fn new<T: Primitive>(size: usize) -> Vec<T> {
+    pub fn create<T: Primitive>(size: usize) -> Vec<T> {
         use std::alloc::{alloc_zeroed, Layout};
 
         assert_eq!(size % LANES, 0);
@@ -89,7 +89,7 @@ impl<const LANES: usize> AlignedFloatVec<LANES> {
             resvec
         }
     }
-    pub fn new_uninitialized<T: Primitive>(size: usize) -> Vec<T> {
+    pub fn create_uninitialized<T: Primitive>(size: usize) -> Vec<T> {
         use std::alloc::{alloc, Layout};
 
         assert_eq!(size % LANES, 0);

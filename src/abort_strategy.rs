@@ -14,7 +14,7 @@ pub enum AbortStrategy<T: Primitive> {
     /// - **x**: The amount of consecutive without improvement, after which the calculation is aborted
     /// - **threshold**: Threshold, used to detect an improvement (`improvement > threshold`)
     /// - **abort_on_negative**: Specifies whether the strategy instantly aborts when a negative improvement occured (**true**), or if
-    /// negative improvements are handled as "no improvements" (**false**).
+    ///   negative improvements are handled as "no improvements" (**false**).
     NoImprovementForXIterations { x: usize, threshold: T, abort_on_negative: bool },
 }
 impl<T: Primitive> AbortStrategy<T> {

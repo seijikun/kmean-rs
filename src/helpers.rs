@@ -32,7 +32,6 @@ macro_rules! assert_approx_eq {
 pub(crate) mod testing {
     use crate::{KMeansState, Primitive};
     use std::collections::HashMap;
-    use std::hash::Hash;
 
     pub struct KMeansShouldResult<T: Primitive> {
         pub distsum: T,

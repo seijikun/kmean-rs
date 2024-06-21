@@ -117,7 +117,7 @@ impl<T: Primitive> KMeansState<T> {
         Self {
             k,
             distsum: T::zero(),
-            centroids: AlignedFloatVec::<LANES>::new(sample_dims * k),
+            centroids: AlignedFloatVec::<LANES>::create(sample_dims * k),
             centroid_frequency: vec![0usize; k],
             assignments: vec![0usize; sample_cnt],
             centroid_distances: vec![T::infinity(); sample_cnt],
@@ -139,8 +139,7 @@ impl<T: Primitive> KMeansState<T> {
             self.centroids = self
                 .centroids
                 .chunks_exact(self.sample_dims)
-                .map(|chunk| chunk.iter().cloned().take(sample_dims))
-                .flatten()
+                .flat_map(|chunk| chunk.iter().cloned().take(sample_dims))
                 .collect();
         }
         self
@@ -161,6 +160,11 @@ impl<T: Primitive> KMeansState<T> {
 /// - K-Mean++ [`KMeans::init_kmeanplusplus`]
 /// - Random-Sample [`KMeans::init_random_sample`]
 /// - Random-Partition [`KMeans::init_random_partition`]
+///
+/// # Generics
+/// - `T`: The type of primitive to work with (e.g. f32 of f64)
+/// - `LANES`: The amount of SIMD lanes (values in one SIMD vector) to limit the generated code to
+///   Note that the generated code selects the appropriate instructions for every platform
 pub struct KMeans<T, const LANES: usize>
 where
     T: Primitive,
@@ -189,7 +193,7 @@ where
         let p_sample_dims = helpers::multiple_roundup(sample_dims, LANES);
 
         // Recopy into new, properly aligned + padded buffer
-        let mut aligned_samples = AlignedFloatVec::<LANES>::new(sample_cnt * p_sample_dims);
+        let mut aligned_samples = AlignedFloatVec::<LANES>::create(sample_cnt * p_sample_dims);
         if p_sample_dims == sample_dims {
             aligned_samples.copy_from_slice(&samples);
         } else {
@@ -211,18 +215,15 @@ where
     pub(crate) fn update_centroid_distances(&self, state: &mut KMeansState<T>) {
         let centroids = &state.centroids;
 
-        // TODO: Switch to par_chunks_exact, when that is merged in rayon (https://github.com/rayon-rs/rayon/pull/629).
-        // par_chunks() works, because sample-dimensions are manually padded, so that there is no remainder
-
         // manually calculate work-packet size, because rayon does not do static scheduling (which is more apropriate here)
         let work_packet_size = self.p_samples.len() / self.p_sample_dims / rayon::current_num_threads();
         self.p_samples
-            .par_chunks(self.p_sample_dims)
+            .par_chunks_exact(self.p_sample_dims)
             .with_min_len(work_packet_size)
             .zip(state.assignments.par_iter().cloned())
             .zip(state.centroid_distances.par_iter_mut())
             .for_each(|((s, assignment), centroid_dist)| {
-                let centroid = centroids.chunks_exact(self.p_sample_dims).skip(assignment).next().unwrap();
+                let centroid = centroids.chunks_exact(self.p_sample_dims).nth(assignment).unwrap();
                 *centroid_dist = s
                     .chunks_exact(LANES)
                     .map(|i| Simd::from_slice(i))
@@ -238,13 +239,10 @@ where
         let centroids = &state.centroids;
         let k = limit_k.unwrap_or(state.k);
 
-        // TODO: Switch to par_chunks_exact, when that is merged in rayon (https://github.com/rayon-rs/rayon/pull/629).
-        // par_chunks() works, because sample-dimensions are manually padded, so that there is no remainder
-
         // manually calculate work-packet size, because rayon does not do static scheduling (which is more apropriate here)
         let work_packet_size = self.p_samples.len() / self.p_sample_dims / rayon::current_num_threads();
         self.p_samples
-            .par_chunks(self.p_sample_dims)
+            .par_chunks_exact(self.p_sample_dims)
             .with_min_len(work_packet_size)
             .zip(state.assignments.par_iter_mut())
             .zip(state.centroid_distances.par_iter_mut())
@@ -296,27 +294,27 @@ where
     /// ## Example
     /// ```rust
     /// use kmeans::*;
-    /// fn main() {
-    ///     let (sample_cnt, sample_dims, k, max_iter) = (20000, 200, 4, 100);
     ///
-    ///     // Generate some random data
-    ///     let mut samples = vec![0.0f64;sample_cnt * sample_dims];
-    ///     samples.iter_mut().for_each(|v| *v = rand::random());
+    /// let (sample_cnt, sample_dims, k, max_iter) = (20000, 200, 4, 100);
     ///
-    ///     // Calculate kmeans, using kmean++ as initialization-method
-    ///     let kmean = KMeans::new(samples, sample_cnt, sample_dims);
-    ///     let result = kmean.kmeans_lloyd(k, max_iter, KMeans::init_kmeanplusplus, &KMeansConfig::default());
+    /// // Generate some random data
+    /// let mut samples = vec![0.0f64;sample_cnt * sample_dims];
+    /// samples.iter_mut().for_each(|v| *v = rand::random());
     ///
-    ///     println!("Centroids: {:?}", result.centroids);
-    ///     println!("Cluster-Assignments: {:?}", result.assignments);
-    ///     println!("Error: {}", result.distsum);
-    /// }
+    /// // Calculate kmeans, using kmean++ as initialization-method
+    /// // KMeans<_, 8> specifies to use f64 SIMD vectors with 8 lanes (e.g. AVX512)
+    /// let kmean: KMeans<_, 8> = KMeans::new(samples, sample_cnt, sample_dims);
+    /// let result = kmean.kmeans_lloyd(k, max_iter, KMeans::init_kmeanplusplus, &KMeansConfig::default());
+    ///
+    /// println!("Centroids: {:?}", result.centroids);
+    /// println!("Cluster-Assignments: {:?}", result.assignments);
+    /// println!("Error: {}", result.distsum);
     /// ```
-    pub fn kmeans_lloyd<'a, F>(&self, k: usize, max_iter: usize, init: F, config: &KMeansConfig<'a, T>) -> KMeansState<T>
+    pub fn kmeans_lloyd<F>(&self, k: usize, max_iter: usize, init: F, config: &KMeansConfig<'_, T>) -> KMeansState<T>
     where
         for<'c> F: FnOnce(&KMeans<T, LANES>, &mut KMeansState<T>, &KMeansConfig<'c, T>),
     {
-        crate::variants::Lloyd::calculate(&self, k, max_iter, init, config)
+        crate::variants::Lloyd::calculate(self, k, max_iter, init, config)
     }
 
     /// Mini-Batch k-Means implementation.
@@ -335,32 +333,30 @@ where
     /// ## Example
     /// ```rust
     /// use kmeans::*;
-    /// fn main() {
-    ///     let (sample_cnt, sample_dims, k, max_iter) = (20000, 200, 4, 100);
     ///
-    ///     // Generate some random data
-    ///     let mut samples = vec![0.0f64;sample_cnt * sample_dims];
-    ///     samples.iter_mut().for_each(|v| *v = rand::random());
+    /// let (sample_cnt, sample_dims, k, max_iter) = (20000, 200, 4, 100);
     ///
-    ///     // Calculate kmeans, using kmean++ as initialization-method
-    ///     let kmean = KMeans::new(samples, sample_cnt, sample_dims);
-    ///     let result = kmean.kmeans_minibatch(4, k, max_iter, KMeans::init_random_sample, &KMeansConfig::default());
+    /// // Generate some random data
+    /// let mut samples = vec![0.0f64;sample_cnt * sample_dims];
+    /// samples.iter_mut().for_each(|v| *v = rand::random());
     ///
-    ///     println!("Centroids: {:?}", result.centroids);
-    ///     println!("Cluster-Assignments: {:?}", result.assignments);
-    ///     println!("Error: {}", result.distsum);
-    /// }
+    /// // Calculate kmeans, using kmean++ as initialization-method
+    /// // KMeans<_, 8> specifies to use f64 SIMD vectors with 8 lanes (e.g. AVX512)
+    /// let kmean: KMeans<_, 8> = KMeans::new(samples, sample_cnt, sample_dims);
+    /// let result = kmean.kmeans_minibatch(4, k, max_iter, KMeans::init_random_sample, &KMeansConfig::default());
+    ///
+    /// println!("Centroids: {:?}", result.centroids);
+    /// println!("Cluster-Assignments: {:?}", result.assignments);
+    /// println!("Error: {}", result.distsum);
     /// ```
-    pub fn kmeans_minibatch<'a, F>(
-        &self, batch_size: usize, k: usize, max_iter: usize, init: F, config: &KMeansConfig<'a, T>,
-    ) -> KMeansState<T>
+    pub fn kmeans_minibatch<F>(&self, batch_size: usize, k: usize, max_iter: usize, init: F, config: &KMeansConfig<'_, T>) -> KMeansState<T>
     where
         for<'c> F: FnOnce(&KMeans<T, LANES>, &mut KMeansState<T>, &KMeansConfig<'c, T>),
         T: Primitive,
         LaneCount<LANES>: SupportedLaneCount,
         Simd<T, LANES>: SupportedSimdArray<T, LANES>,
     {
-        crate::variants::Minibatch::calculate(&self, batch_size, k, max_iter, init, config)
+        crate::variants::Minibatch::calculate(self, batch_size, k, max_iter, init, config)
     }
 
     /// K-Means++ initialization method, as implemented in Matlab
@@ -376,7 +372,7 @@ where
     ///
     /// ## Note
     /// This method is not meant for direct invocation. Pass a reference to it, to an instance-method of [`KMeans`].
-    pub fn init_kmeanplusplus<'a>(kmean: &KMeans<T, LANES>, state: &mut KMeansState<T>, config: &KMeansConfig<'a, T>) {
+    pub fn init_kmeanplusplus(kmean: &KMeans<T, LANES>, state: &mut KMeansState<T>, config: &KMeansConfig<'_, T>) {
         crate::inits::kmeanplusplus::calculate(kmean, state, config);
     }
 
@@ -386,7 +382,7 @@ where
     /// This initialization method randomly partitions the samples into k partitions, and then calculates these partion's means.
     /// These means are then used as initial clusters.
     ///
-    pub fn init_random_partition<'a>(kmean: &KMeans<T, LANES>, state: &mut KMeansState<T>, config: &KMeansConfig<'a, T>) {
+    pub fn init_random_partition(kmean: &KMeans<T, LANES>, state: &mut KMeansState<T>, config: &KMeansConfig<'_, T>) {
         crate::inits::randompartition::calculate(kmean, state, config);
     }
 
@@ -397,7 +393,7 @@ where
     ///
     /// ## Note
     /// This method is not meant for direct invocation. Pass a reference to it, to an instance-method of [`KMeans`].
-    pub fn init_random_sample<'a>(kmean: &KMeans<T, LANES>, state: &mut KMeansState<T>, config: &KMeansConfig<'a, T>) {
+    pub fn init_random_sample(kmean: &KMeans<T, LANES>, state: &mut KMeansState<T>, config: &KMeansConfig<'_, T>) {
         crate::inits::randomsample::calculate(kmean, state, config);
     }
 }
@@ -405,7 +401,6 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use helpers::testing;
     use test::Bencher;
 
     #[test]

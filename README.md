@@ -3,6 +3,8 @@
 [![docs](https://docs.rs/kmeans/badge.svg)](https://docs.rs/kmeans/latest/kmeans/)
 
 kmeans is a small and fast library for k-means clustering calculations.
+It **requires a nightly compiler** with the [portable_simd](https://doc.rust-lang.org/std/simd/index.html) feature to work.
+
 Here is a small example, using kmean++ as initialization method and lloyd as k-means variant:
 
 ```rust
@@ -16,7 +18,8 @@ fn main() {
     samples.iter_mut().for_each(|v| *v = rand::random());
 
     // Calculate kmeans, using kmean++ as initialization-method
-    let kmean = KMeans::new(samples, sample_cnt, sample_dims);
+    // KMeans<_, 8> specifies to use f64 SIMD vectors with 8 lanes (e.g. AVX512)
+    let kmean: KMeans<_, 8> = KMeans::new(samples, sample_cnt, sample_dims);
     let result = kmean.kmeans_lloyd(k, max_iter, KMeans::init_kmeanplusplus, &KMeansConfig::default());
 
     println!("Centroids: {:?}", result.centroids);
