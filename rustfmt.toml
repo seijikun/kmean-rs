@@ -1,0 +1,8 @@
+fn_params_layout = "Compressed"
+fn_single_line = true
+match_block_trailing_comma = true
+max_width = 140
+imports_granularity = "Module"
+overflow_delimited_expr = true
+group_imports = "One"
+short_array_element_width_threshold = 50
