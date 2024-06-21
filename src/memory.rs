@@ -1,8 +1,9 @@
-use std::{fmt::{Display, LowerExp}, iter, ops, simd::{num::SimdFloat, LaneCount, Simd, SimdElement, SupportedLaneCount}};
+use core::fmt;
+use std::{iter, ops, simd::{num::SimdFloat, LaneCount, Simd, SimdElement, SupportedLaneCount}};
 use rand::distributions::uniform::SampleUniform;
 
 pub trait Primitive: 'static + SimdElement + SampleUniform
-    + Default + Display + LowerExp + Send + Sync + iter::Sum
+    + Default + fmt::Display + fmt::Debug + fmt::LowerExp + Send + Sync + iter::Sum
     + num::Float
     + ops::Add<Output = Self> + ops::Sub<Output = Self> + ops::Mul<Output = Self> + ops::Div<Output = Self>
     + ops::AddAssign + ops::SubAssign
@@ -10,7 +11,7 @@ pub trait Primitive: 'static + SimdElement + SampleUniform
 
 impl<T> Primitive for T
 where T: 'static + SimdElement + SampleUniform
-    + Default + Display + LowerExp + Send + Sync + iter::Sum
+    + Default + fmt::Display + fmt::Debug + fmt::LowerExp + Send + Sync + iter::Sum
     + num::Float
     + ops::Add<Output = Self> + ops::Sub<Output = Self> + ops::Mul<Output = Self> + ops::Div<Output = Self>
     + ops::AddAssign + ops::SubAssign

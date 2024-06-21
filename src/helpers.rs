@@ -64,19 +64,29 @@ use crate::{KMeansState, Primitive};
 			should_freq.insert(actual_id, should_freq.get(&actual_id).cloned().unwrap_or_default() + 1);
 		}
 		// use idmap to compare should & actual in correct order
-		for (should_idx, actual_idx) in idmap {
+		for (&should_idx, &actual_idx) in &idmap {
 			//assert_approx_eq!(should.centroid_distances[should_idx], actual.centroid_distances[actual_idx], CMP_EPSILON);
 			assert_eq!(should_freq[&actual_idx], actual.centroid_frequency[actual_idx]);
 			let should_spl_offset = should_idx * should.sample_dims;
 			let actual_spl_offset = actual_idx * should.sample_dims;
 			for d in 0..should.sample_dims {
-				assert_approx_eq!(should.centroids[should_spl_offset + d], actual.centroids[actual_spl_offset + d], cmp_epsilon);
+				let should_centroid_dim = should.centroids[should_spl_offset + d];
+				let actual_centroid_dim = actual.centroids[actual_spl_offset + d];
+				if should_centroid_dim.abs_sub(actual_centroid_dim) > cmp_epsilon {
+					panic!(
+						"Difference in calculated centroids too large.\n:Mapping(should -> actual): {:?}\nActual: {:?}\nShould: {:?}",
+						idmap, actual.centroids, should.centroids
+					);
+				}
 			}
 		}
 		for idx in 0..should.centroid_distances.len() {
 			let (should_dist, actual_dist) = (should.centroid_distances[idx], actual.centroid_distances[idx]);
 			if should_dist.abs_sub(actual_dist) > cmp_epsilon {
-				panic!("Centroid distances mismatch at idx {}. Actual: {} but should have been: {}", idx, actual_dist, should_dist);
+				panic!(
+					"Centroid distances mismatch at idx {}.\nActual: {:?}\nShould: {:?}",
+					idx, actual.centroid_distances, should.centroid_distances
+				);
 			}
 		}
 	}
