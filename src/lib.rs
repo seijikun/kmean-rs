@@ -17,51 +17,51 @@
 //! K-Means clustering is not one algorithm, but more like a concept describing the outcome.
 //! There are differing implementations and variants using differing levels of approximations.
 //! For a list of supported variants, have a look at the documentation of [`KMeans`].
-//! 
+//!
 //! ## Supported centroid initializations
 //! The outcome of each K-Means run depends on the initialization of its clusters. There exist
 //! multiple algorithms for this initialization, most of which are based on at least some
 //! degree of randomness. For a list of implemented initialization methods, see [`KMeans`].
-//! 
+//!
 //! ## Supported primitive types
 //! - [`f32`]
 //! - [`f64`]
-//! 
+//!
 //! ## Example
 //! Both: Supported variants and supported centroid initializations can be combined at will.
 //! Here is an example showing the default full k-Means implementation, using K-Mean++ initialization:
-//! 
+//!
 //! ```rust
 //! use kmeans::*;
 //!
 //! fn main() {
 //!     let (sample_cnt, sample_dims, k, max_iter) = (20000, 200, 4, 100);
-//! 
+//!
 //!     // Generate some random data
 //!     let mut samples = vec![0.0f64;sample_cnt * sample_dims];
 //!     samples.iter_mut().for_each(|v| *v = rand::random());
-//! 
+//!
 //!     // Calculate kmeans, using kmean++ as initialization-method
 //!     let kmean = KMeans::new(samples, sample_cnt, sample_dims);
 //!     let result = kmean.kmeans_lloyd(k, max_iter, KMeans::init_kmeanplusplus, &KMeansConfig::default());
-//! 
+//!
 //!     println!("Centroids: {:?}", result.centroids);
 //!     println!("Cluster-Assignments: {:?}", result.assignments);
 //!     println!("Error: {}", result.distsum);
 //! }
 //! ```
-//! 
+//!
 //! ## Example (using the status event callbacks)
 //! ```rust
 //! use kmeans::*;
-//! 
+//!
 //! fn main() {
 //!     let (sample_cnt, sample_dims, k, max_iter) = (20000, 200, 4, 2500);
-//! 
+//!
 //!     // Generate some random data
 //!     let mut samples = vec![0.0f64;sample_cnt * sample_dims];
 //!     samples.iter_mut().for_each(|v| *v = rand::random());
-//! 
+//!
 //!	    let conf = KMeansConfig::build()
 //!		    .init_done(&|_| println!("Initialization completed."))
 //!		    .iteration_done(&|s, nr, new_distsum|
@@ -72,25 +72,25 @@
 //!     // Calculate kmeans, using kmean++ as initialization-method
 //!     let kmean = KMeans::new(samples, sample_cnt, sample_dims);
 //!     let result = kmean.kmeans_minibatch(4, k, max_iter, KMeans::init_random_sample, &conf);
-//! 
+//!
 //!     println!("Centroids: {:?}", result.centroids);
 //!     println!("Cluster-Assignments: {:?}", result.assignments);
 //!     println!("Error: {}", result.distsum);
 //! }
 //! ```
-//! 
+//!
 //! ## Short API-Overview / Description
 //! Entry-point of the library is the [`KMeans`] struct. This struct is generic over the underlying primitive
 //! type, that should be used for the calculations. To use KMeans, an instance of this struct is created, taking
 //! over the sample data into its ownership (and doing some memory-related optimizations).
-//! 
+//!
 //! **Note**: The input-data has to use the same primitive as the required output-data (distances).
-//! 
+//!
 //! The [`KMeans`] struct's instance-methods represent the supported k-Means variants & implementations.
 //! Calling such a method (e.g. [`KMeans::kmeans_lloyd`]) on the struct does not mutate it, so multiple runs can be
 //! done in parallel (the algorithm itself is already parallellized though). Internally, a new instance of
 //! [`KMeansState`] is used to store the state (and finally the result) of a K-Means calculation.
-//! 
+//!
 //! All of the instance-methods take multiple arguments. One of which is the chosen centroid initialization method. These
 //! initialization-method implementations are static methods within the [`KMeans`] struct, which are simply passed in as reference.
 
@@ -109,12 +109,11 @@ pub use memory::Primitive;
 
 #[cfg(test)]
 mod tests {
+    use memory::SupportedSimdArray;
     use test::Bencher;
     use rand::prelude::*;
     use super::*;
-    use std::iter::Sum;
-    use std::ops::{Add, Div, Mul, Sub};
-    use std::simd::{num::SimdFloat, LaneCount, Simd, SimdElement, SupportedLaneCount};
+    use std::simd::{LaneCount, Simd, SupportedLaneCount};
 
     #[bench]
     fn complete_benchmark_lloyd_small_f64(b: &mut Bencher) {
@@ -148,7 +147,7 @@ mod tests {
     fn complete_benchmark_lloyd_huge_f32(b: &mut Bencher) {
         complete_benchmark_lloyd::<f32, 8>(b, 20000, 256, 1, 32);
     }
-    // TODO
+
     fn complete_benchmark_lloyd<T: Primitive, const LANES: usize>(
         b: &mut Bencher,
         sample_cnt: usize,
@@ -156,24 +155,9 @@ mod tests {
         max_iter: usize,
         k: usize,
     ) where
-        T: SimdElement
-            + Copy
-            + Default
-            + Add<Output = T>
-            + Mul<Output = T>
-            + Div<Output = T>
-            + Sub<Output = T>
-            + Sum
-            + Primitive
-            + num::Zero
-            + num::One,
-        Simd<T, LANES>: Sub<Output = Simd<T, LANES>>
-            + Add<Output = Simd<T, LANES>>
-            + Mul<Output = Simd<T, LANES>>
-            + Div<Output = Simd<T, LANES>>
-            + Sum
-            + SimdFloat<Scalar = T>,
+        T: Primitive,
         LaneCount<LANES>: SupportedLaneCount,
+        Simd<T, LANES>: SupportedSimdArray<T, LANES>
     {
         let mut rnd = rand::rngs::StdRng::seed_from_u64(1337);
         let mut samples = vec![T::zero();sample_cnt * sample_dims];
@@ -217,7 +201,7 @@ mod tests {
     fn complete_benchmark_minibatch_huge_f32(b: &mut Bencher) {
         complete_benchmark_minibatch::<f32, 8>(b, 2000, 20000, 256, 30, 32);
     }
-    // TODO
+
     fn complete_benchmark_minibatch<T: Primitive, const LANES: usize>(
         b: &mut Bencher,
         batch_size: usize,
@@ -226,24 +210,9 @@ mod tests {
         max_iter: usize,
         k: usize,
     ) where
-        T: SimdElement
-            + Copy
-            + Default
-            + Add<Output = T>
-            + Mul<Output = T>
-            + Div<Output = T>
-            + Sub<Output = T>
-            + Sum
-            + Primitive
-            + num::Zero
-            + num::One,
-        Simd<T, LANES>: Sub<Output = Simd<T, LANES>>
-            + Add<Output = Simd<T, LANES>>
-            + Mul<Output = Simd<T, LANES>>
-            + Div<Output = Simd<T, LANES>>
-            + Sum
-            + SimdFloat<Scalar = T>,
+        T: Primitive,
         LaneCount<LANES>: SupportedLaneCount,
+        Simd<T, LANES>: SupportedSimdArray<T, LANES>
     {
         let mut rnd = rand::rngs::StdRng::seed_from_u64(1337);
         let mut samples = vec![T::zero();sample_cnt * sample_dims];

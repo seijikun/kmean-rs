@@ -15,7 +15,7 @@ macro_rules! assert_approx_eq {
 				if !(delta < tol_val) {
 					panic!(
 						"assertion failed: `(left ≈ right)` \
-						(left: `{:?}`, right: `{:?}`) \
+						(left: `{}`, right: `{}`) \
 						with ∆={:1.1e} (allowed ∆={:e})",
 						left_val , right_val, delta, tol_val
 					)

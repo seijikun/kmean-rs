@@ -1,26 +1,18 @@
 use crate::{KMeans, KMeansState, KMeansConfig, memory::*};
-use std::simd::{Simd, SimdElement, LaneCount, SupportedLaneCount, num::SimdFloat};
-use std::ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Sub, SubAssign};
-use std::iter::Sum;
+use std::simd::{Simd, LaneCount, SupportedLaneCount};
 
-pub(crate) struct Lloyd<T, const LANES: usize> 
-where 
-    T: Primitive, 
+pub(crate) struct Lloyd<T, const LANES: usize>
+where
+    T: Primitive,
     LaneCount<LANES>: SupportedLaneCount,
 {
     _p: std::marker::PhantomData<T>,
 }
-// TODO
 impl<T, const LANES: usize> Lloyd<T, LANES>
 where
-T: SimdElement + Copy + Default + Add<Output = T> + Mul<Output = T> + Div<Output = T> + Sub<Output = T> + Sum + Primitive,
-Simd<T, LANES>: Sub<Output = Simd<T, LANES>>
-    + Add<Output = Simd<T, LANES>>
-    + Mul<Output = Simd<T, LANES>>
-    + Div<Output = Simd<T, LANES>>
-    + Sum
-    + SimdFloat<Scalar = T>,
-LaneCount<LANES>: SupportedLaneCount,
+    T: Primitive,
+    LaneCount<LANES>: SupportedLaneCount,
+    Simd<T, LANES>: SupportedSimdArray<T, LANES>
 {
     fn update_centroids(data: &KMeans<T, LANES>, state: &mut KMeansState<T>) -> T
     {

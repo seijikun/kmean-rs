@@ -1,23 +1,16 @@
 use crate::{KMeans, KMeansState, KMeansConfig, memory::*};
 use rand::prelude::*;
-use std::simd::{Simd, SimdElement, LaneCount, SupportedLaneCount, num::SimdFloat};
-use std::iter::Sum;
-use std::ops::{Add, Mul, Div, Sub};
+use std::simd::{Simd, LaneCount, SupportedLaneCount};
 
-// TODO
-#[inline(always)] pub fn calculate<'a, T, const LANES: usize>(
+#[inline(always)]
+pub fn calculate<'a, T, const LANES: usize>(
     kmean: &KMeans<T, LANES>,
     state: &mut KMeansState<T>,
     config: &KMeansConfig<'a, T>,
 ) where
-    T: SimdElement + Copy + Default + Add<Output = T> + Mul<Output = T> + Div<Output = T> + Sub<Output = T> + Sum + Primitive,
-    Simd<T, LANES>: Sub<Output = Simd<T, LANES>>
-        + Add<Output = Simd<T, LANES>>
-        + Mul<Output = Simd<T, LANES>>
-        + Div<Output = Simd<T, LANES>>
-        + Sum
-        + SimdFloat<Scalar = T>,
-    LaneCount<LANES>: SupportedLaneCount,
+	T: Primitive,
+	LaneCount<LANES>: SupportedLaneCount,
+	Simd<T, LANES>: SupportedSimdArray<T, LANES>
 {
 	let (assignments, centroids, centroid_frequency, k) =
 		(&mut state.assignments, &mut state.centroids, &mut state.centroid_frequency, state.k);
