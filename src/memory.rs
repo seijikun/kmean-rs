@@ -1,15 +1,38 @@
-use num::{NumCast, Zero, Float};
-use std::{
-    fmt::{Debug, Display, LowerExp}, iter::Sum, ops::{Add, AddAssign, Sub, SubAssign}, simd::{num::SimdFloat, LaneCount, SupportedLaneCount}
-};
+use std::{fmt::{Display, LowerExp}, iter, ops, simd::{num::SimdFloat, LaneCount, Simd, SimdElement, SupportedLaneCount}};
 use rand::distributions::uniform::SampleUniform;
 
-pub trait Primitive: Add + AddAssign + Sum + Sub + SubAssign + Zero + Float + NumCast + SampleUniform
-                + PartialOrd + Copy + Default + Display + Debug + Sync + Send + LowerExp + 'static
-                + for<'a> AddAssign<&'a Self> + for<'a> Sub<&'a Self> {}
-impl Primitive for f32 {}
-impl Primitive for f64 {}
+pub trait Primitive: 'static + SimdElement + SampleUniform
+    + Default + Display + LowerExp + Send + Sync + iter::Sum
+    + num::Float
+    + ops::Add<Output = Self> + ops::Sub<Output = Self> + ops::Mul<Output = Self> + ops::Div<Output = Self>
+    + ops::AddAssign + ops::SubAssign
+    + for<'a> ops::AddAssign<&'a Self> + for<'a> ops::Sub<&'a Self> {}
 
+impl<T> Primitive for T
+where T: 'static + SimdElement + SampleUniform
+    + Default + Display + LowerExp + Send + Sync + iter::Sum
+    + num::Float
+    + ops::Add<Output = Self> + ops::Sub<Output = Self> + ops::Mul<Output = Self> + ops::Div<Output = Self>
+    + ops::AddAssign + ops::SubAssign
+    + for<'a> ops::AddAssign<&'a Self> + for<'a> ops::Sub<&'a Self> {}
+
+// ##################################################################
+
+pub trait SupportedSimdArray<T: Primitive, const LANES: usize> :
+    ops::Sub<Output = Self> + ops::Add<Output = Self> + ops::Mul<Output = Self> + ops::Div<Output = Self>
+    + iter::Sum + SimdFloat<Scalar = T> {}
+
+impl<T: Primitive, const LANES: usize> SupportedSimdArray<T, LANES> for Simd<T, LANES>
+where
+    LaneCount<LANES>: SupportedLaneCount,
+    Simd<T, LANES>: ops::Sub<Output = Simd<T, LANES>>
+        + ops::Add<Output = Simd<T, LANES>>
+        + ops::Mul<Output = Simd<T, LANES>>
+        + ops::Div<Output = Simd<T, LANES>>
+        + iter::Sum
+        + SimdFloat<Scalar = T> {}
+
+// ##################################################################
 
 pub(crate) struct AlignedFloatVec<const LANES: usize>;
 impl <const LANES: usize> AlignedFloatVec<LANES> {

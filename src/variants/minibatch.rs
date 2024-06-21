@@ -2,10 +2,8 @@ use crate::{KMeans, KMeansConfig, KMeansState, memory::*};
 use rand::prelude::*;
 use rayon::prelude::*;
 use std::ops::{Range, DerefMut};
-use std::iter::Sum;
-use std::ops::{Add, Sub, Mul, Div};
 use std::simd::num::SimdFloat;
-use std::simd::{LaneCount, Simd, SimdElement, SupportedLaneCount};
+use std::simd::{LaneCount, Simd, SupportedLaneCount};
 
 struct BatchInfo {
 	start_idx: usize,
@@ -20,17 +18,11 @@ impl BatchInfo {
 pub(crate) struct Minibatch<T, const LANES: usize> where T: Primitive, LaneCount<LANES>: SupportedLaneCount{
 	_p: std::marker::PhantomData<T>
 }
-// TODO
 impl<T, const LANES: usize> Minibatch<T, LANES>
 where
-	T: SimdElement + Copy + Default + Add<Output = T> + Mul<Output = T> + Div<Output = T> + Sub<Output = T> + Sum + Primitive,
-	Simd<T, LANES>: Sub<Output = Simd<T, LANES>>
-		+ Add<Output = Simd<T, LANES>>
-		+ Mul<Output = Simd<T, LANES>>
-		+ Div<Output = Simd<T, LANES>>
-		+ Sum
-		+ SimdFloat<Scalar = T>,
+	T: Primitive,
 	LaneCount<LANES>: SupportedLaneCount,
+	Simd<T, LANES>: SupportedSimdArray<T, LANES>
 {
 	fn update_cluster_assignments<'a>(data: &KMeans<T, LANES>, state: &mut KMeansState<T>, batch: &BatchInfo, shuffled_samples: &'a [T], limit_k: Option<usize>) {
 		let centroids = &state.centroids;

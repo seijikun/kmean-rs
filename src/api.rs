@@ -1,10 +1,8 @@
 use crate::{helpers, memory::*, AbortStrategy};
-use core::simd::{num::SimdFloat, LaneCount, Simd, SimdElement, SupportedLaneCount};
+use core::simd::{num::SimdFloat, LaneCount, Simd, SupportedLaneCount};
 use rand::prelude::*;
 use rayon::prelude::*;
 use std::cell::RefCell;
-use std::iter::Sum;
-use std::ops::{Add, Div, Mul, Sub};
 
 pub type InitDoneCallbackFn<'a, T> = &'a dyn Fn(&KMeansState<T>);
 pub type IterationDoneCallbackFn<'a, T> = &'a dyn Fn(&KMeansState<T>, usize, T);
@@ -12,7 +10,7 @@ pub type IterationDoneCallbackFn<'a, T> = &'a dyn Fn(&KMeansState<T>, usize, T);
 /// This is a structure holding various configuration options for the a k-means calculations, such as
 /// the random number generator to use, or a couple of callbacks, that can be set to get status information from
 /// a running k-means calculation.
-/// 
+///
 /// For a more detailed information about all possible options, have a look at [`KMeansConfigBuilder`].
 pub struct KMeansConfig<'a, T: Primitive> {
     /// Callback that is called, when the initialization phase finished
@@ -85,10 +83,10 @@ impl<'a, T: Primitive> KMeansConfigBuilder<'a, T> {
 /// well as the final result, as returned by the API.
 /// All mutations are done in this structure, making [`KMeans`] immutable, and therefore allowing
 /// it to be used in parallel, without having to duplicate the input-data.
-/// 
+///
 /// ## Generics
 /// - **T**: Underlying primitive type that was used for the calculation
-/// 
+///
 /// ## Fields
 /// - **k**: The amount of clusters that were requested when calculating this k-means result
 /// - **distsum**: The total sum of (squared) distances from all samples to their respective centroids
@@ -138,23 +136,24 @@ impl<T: Primitive> KMeansState<T> {
 
 
 /// Entrypoint of this crate's API-Surface.
-/// 
+///
 /// Create an instance of this struct, giving the samples you want to operate on. The primitive type
 /// of the passed samples array will be the type used internaly for all calculations, as well as the result
 /// as stored in the returned [`KMeansState`] structure.
-/// 
+///
 /// ## Supported variants
 /// - k-Means clustering (Lloyd) [`KMeans::kmeans_lloyd`]
 /// - Mini-Batch k-Means clustering [`KMeans::kmeans_minibatch`]
-/// 
+///
 /// ## Supported initialization methods
 /// - K-Mean++ [`KMeans::init_kmeanplusplus`]
 /// - Random-Sample [`KMeans::init_random_sample`]
 /// - Random-Partition [`KMeans::init_random_partition`]
 pub struct KMeans<T, const LANES: usize>
 where
-    T: SimdElement + Copy + Default + Add<Output = T> + Mul<Output = T> + Sub<Output = T> + Sum,
+    T: Primitive,
     LaneCount<LANES>: SupportedLaneCount,
+    Simd<T, LANES>: SupportedSimdArray<T, LANES>
 {
     pub(crate) sample_cnt: usize,
     pub(crate) sample_dims: usize,
@@ -163,27 +162,12 @@ where
 }
 impl<T, const LANES: usize> KMeans<T, LANES>
 where
-    T: SimdElement
-        + Copy
-        + Default
-        + Add<Output = T>
-        + Mul<Output = T>
-        + Div<Output = T>
-        + Sub<Output = T>
-        + Sum
-        + Primitive
-        + num::Zero
-        + num::One,
-    Simd<T, LANES>: Sub<Output = Simd<T, LANES>>
-        + Add<Output = Simd<T, LANES>>
-        + Mul<Output = Simd<T, LANES>>
-        + Div<Output = Simd<T, LANES>>
-        + Sum
-        + SimdFloat<Scalar = T>,
+    T: Primitive,
     LaneCount<LANES>: SupportedLaneCount,
+    Simd<T, LANES>: SupportedSimdArray<T, LANES>
 {
     /// Create a new instance of the [`KMeans`] structure.
-    /// 
+    ///
     /// ## Arguments
     /// - **samples**: Vector of samples [row-major] = [<sample0>,<sample1>,<sample2>,...]
     /// - **sample_cnt**: Amount of samples, contained in the passed **samples** vector
@@ -191,7 +175,7 @@ where
     pub fn new(samples: Vec<T>, sample_cnt: usize, sample_dims: usize) -> Self {
         assert!(samples.len() == sample_cnt * sample_dims);
         let p_sample_dims = helpers::multiple_roundup(sample_dims, LANES);
-       
+
         // Recopy into new, properly aligned + padded buffer
         let mut aligned_samples = AlignedFloatVec::<LANES>::new(sample_cnt * p_sample_dims);
         if p_sample_dims == sample_dims {
@@ -289,30 +273,30 @@ where
 
     /// Normal K-Means algorithm implementation. This is the same algorithm as implemented in Matlab (one-phase).
     /// (see: https://uk.mathworks.com/help/stats/kmeans.html#bueq7aj-5    Section: More About)
-    /// 
+    ///
     /// ## Arguments
     /// - **k**: Amount of clusters to search for
     /// - **max_iter**: Limit the maximum amount of iterations (just pass a high number for infinite)
     /// - **init**: Initialization-Method to use for the initialization of the **k** centroids
     /// - **config**: [`KMeansConfig`] instance, containing several configuration options for the calculation.
-    /// 
+    ///
     /// ## Returns
     /// Instance of [`KMeansState`], containing the final state (result).
-    /// 
+    ///
     /// ## Example
     /// ```rust
     /// use kmeans::*;
     /// fn main() {
     ///     let (sample_cnt, sample_dims, k, max_iter) = (20000, 200, 4, 100);
-    /// 
+    ///
     ///     // Generate some random data
     ///     let mut samples = vec![0.0f64;sample_cnt * sample_dims];
     ///     samples.iter_mut().for_each(|v| *v = rand::random());
-    /// 
+    ///
     ///     // Calculate kmeans, using kmean++ as initialization-method
     ///     let kmean = KMeans::new(samples, sample_cnt, sample_dims);
     ///     let result = kmean.kmeans_lloyd(k, max_iter, KMeans::init_kmeanplusplus, &KMeansConfig::default());
-    /// 
+    ///
     ///     println!("Centroids: {:?}", result.centroids);
     ///     println!("Cluster-Assignments: {:?}", result.assignments);
     ///     println!("Error: {}", result.distsum);
@@ -325,17 +309,17 @@ where
 
     /// Mini-Batch k-Means implementation.
     /// (see: https://dl.acm.org/citation.cfm?id=1772862)
-    /// 
+    ///
     /// ## Arguments
     /// - **batch_size**: Amount of samples to use per iteration (higher -> better approximation but slower)
     /// - **k**: Amount of clusters to search for
     /// - **max_iter**: Limit the maximum amount of iterations (just pass a high number for infinite)
     /// - **init**: Initialization-Method to use for the initialization of the **k** centroids
     /// - **config**: [`KMeansConfig`] instance, containing several configuration options for the calculation.
-    /// 
+    ///
     /// ## Returns
     /// Instance of [`KMeansState`], containing the final state (result).
-    /// 
+    ///
     /// ## Example
     /// ```rust
     /// use kmeans::*;
@@ -358,28 +342,15 @@ where
     pub fn kmeans_minibatch<'a, F>(&self, batch_size: usize, k: usize, max_iter: usize, init: F, config: &KMeansConfig<'a, T>) -> KMeansState<T>
     where
         for<'c> F: FnOnce(&KMeans<T, LANES>, &mut KMeansState<T>, &KMeansConfig<'c, T>),
-        T: SimdElement
-            + Copy
-            + Default
-            + Add<Output = T>
-            + Mul<Output = T>
-            + Div<Output = T>
-            + Sub<Output = T>
-            + Sum
-            + Primitive,
-        Simd<T, LANES>: Sub<Output = Simd<T, LANES>>
-            + Add<Output = Simd<T, LANES>>
-            + Mul<Output = Simd<T, LANES>>
-            + Div<Output = Simd<T, LANES>>
-            + Sum
-            + SimdFloat<Scalar = T>,
+        T: Primitive,
         LaneCount<LANES>: SupportedLaneCount,
+        Simd<T, LANES>: SupportedSimdArray<T, LANES>
     {
         crate::variants::Minibatch::calculate(&self, batch_size, k, max_iter, init, config)
     }
 
     /// K-Means++ initialization method, as implemented in Matlab
-    /// 
+    ///
     /// ## Description
     /// This initialization method starts by selecting one sample as first centroid.
     /// Proceeding from there, the method iteratively selects one new centroid (per iteration) by calculating
@@ -388,7 +359,7 @@ where
     /// the next centroid into account. This leads to a tendency of selecting centroids, that are far away from
     /// their currently assigned cluster's centroid.
     /// (see: https://uk.mathworks.com/help/stats/kmeans.html#bueq7aj-5    Section: More About)
-    /// 
+    ///
     /// ## Note
     /// This method is not meant for direct invocation. Pass a reference to it, to an instance-method of [`KMeans`].
     pub fn init_kmeanplusplus<'a>(kmean: &KMeans<T, LANES>, state: &mut KMeansState<T>, config: &KMeansConfig<'a, T>) {
@@ -396,20 +367,20 @@ where
     }
 
     /// Random-Parition initialization method
-    /// 
+    ///
     /// ## Description
     /// This initialization method randomly partitions the samples into k partitions, and then calculates these partion's means.
     /// These means are then used as initial clusters.
-    /// 
+    ///
     pub fn init_random_partition<'a>(kmean: &KMeans<T, LANES>, state: &mut KMeansState<T>, config: &KMeansConfig<'a, T>) {
         crate::inits::randompartition::calculate(kmean, state, config);
     }
 
     /// Random sample initialization method (a.k.a. Forgy)
-    /// 
+    ///
     /// ## Description
     /// This initialization method randomly selects k centroids from the samples as initial centroids.
-    /// 
+    ///
     /// ## Note
     /// This method is not meant for direct invocation. Pass a reference to it, to an instance-method of [`KMeans`].
     pub fn init_random_sample<'a>(kmean: &KMeans<T, LANES>, state: &mut KMeansState<T>, config: &KMeansConfig<'a, T>) {
@@ -442,24 +413,9 @@ mod tests {
 
     fn calculate_cluster_assignments<T, const LANES: usize>(sample_dims: usize, max_diff: T)
     where
-    T: SimdElement
-        + Copy
-        + Default
-        + Add<Output = T>
-        + Mul<Output = T>
-        + Div<Output = T>
-        + Sub<Output = T>
-        + Sum
-        + Primitive
-        + num::Zero
-        + num::One,
-    Simd<T, LANES>: Sub<Output = Simd<T, LANES>>
-        + Add<Output = Simd<T, LANES>>
-        + Mul<Output = Simd<T, LANES>>
-        + Div<Output = Simd<T, LANES>>
-        + Sum
-        + SimdFloat<Scalar = T>,
-    LaneCount<LANES>: SupportedLaneCount
+        T: Primitive,
+        LaneCount<LANES>: SupportedLaneCount,
+        Simd<T, LANES>: SupportedSimdArray<T, LANES>
     {
         let sample_cnt = 1000;
         let k = 5;
@@ -468,7 +424,7 @@ mod tests {
         samples.iter_mut().for_each(|i| *i = thread_rng().gen_range(T::zero()..T::one()));
 
         let kmean = KMeans::new(samples, sample_cnt, sample_dims);
-        
+
         let mut state = KMeansState::new::<LANES>(kmean.sample_cnt, kmean.p_sample_dims, k);
         state.centroids.iter_mut()
             .zip(kmean.p_samples.iter())
@@ -496,7 +452,7 @@ mod tests {
                 *centroid_dist = best_dist;
             });
 
-        
+
         // calculate distances using optimized code
         kmean.update_cluster_assignments(&mut state, None);
 
@@ -513,24 +469,9 @@ mod tests {
 
     fn distance_matrix_calculation_benchmark<T, const LANES: usize>(b: &mut Bencher)
     where
-        T: SimdElement
-            + Copy
-            + Default
-            + Add<Output = T>
-            + Mul<Output = T>
-            + Div<Output = T>
-            + Sub<Output = T>
-            + Sum
-            + Primitive
-            + num::Zero
-            + num::One,
-        Simd<T, LANES>: Sub<Output = Simd<T, LANES>>
-            + Add<Output = Simd<T, LANES>>
-            + Mul<Output = Simd<T, LANES>>
-            + Div<Output = Simd<T, LANES>>
-            + Sum
-            + SimdFloat<Scalar = T>,
+        T: Primitive,
         LaneCount<LANES>: SupportedLaneCount,
+        Simd<T, LANES>: SupportedSimdArray<T, LANES>
     {
         let sample_cnt = 20000;
         let sample_dims = 2000;
