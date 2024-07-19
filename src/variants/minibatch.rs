@@ -3,8 +3,7 @@ use crate::{KMeans, KMeansConfig, KMeansState};
 use rand::prelude::*;
 use rayon::prelude::*;
 use std::ops::{DerefMut, Range};
-use std::simd::num::SimdFloat;
-use std::simd::{LaneCount, Simd, SupportedLaneCount};
+use std::simd::{LaneCount, Simd, SimdFloat, SupportedLaneCount};
 
 struct BatchInfo {
     start_idx: usize,
