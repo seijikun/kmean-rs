@@ -396,6 +396,21 @@ where
     pub fn init_random_sample(kmean: &KMeans<T, LANES>, state: &mut KMeansState<T>, config: &KMeansConfig<'_, T>) {
         crate::inits::randomsample::calculate(kmean, state, config);
     }
+
+    /// Precomputed centroids initialization method
+    ///
+    /// ## Description
+    /// This initialization method requires a precomputed list of k centroids to use as initial
+    /// centroids.
+    ///
+    /// ## Note
+    /// This method must be invoked with a precomputed list of centroids. It then
+    /// returns a closure that can be passed to the [`KMeans`] object.
+    pub fn init_precomputed(centroids: Vec<T>) -> impl Fn(&KMeans<T, LANES>, &mut KMeansState<T>, &KMeansConfig<'_, T>) {
+        move |kmean, state, config| {
+            crate::inits::precomputed::calculate(kmean, state, config, centroids.clone());
+        }
+    }
 }
 
 #[cfg(test)]
