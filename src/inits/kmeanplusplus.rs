@@ -1,3 +1,4 @@
+use crate::api::DistanceFunction;
 use crate::memory::*;
 use crate::{KMeans, KMeansConfig, KMeansState};
 use rand::distributions::weighted::WeightedIndex;
@@ -6,11 +7,12 @@ use std::ops::DerefMut;
 use std::simd::{LaneCount, Simd, SupportedLaneCount};
 
 #[inline(always)]
-pub fn calculate<T, const LANES: usize>(kmean: &KMeans<T, LANES>, state: &mut KMeansState<T>, config: &KMeansConfig<'_, T>)
+pub fn calculate<T, const LANES: usize, D>(kmean: &KMeans<T, LANES, D>, state: &mut KMeansState<T>, config: &KMeansConfig<'_, T>)
 where
     T: Primitive,
     LaneCount<LANES>: SupportedLaneCount,
     Simd<T, LANES>: SupportedSimdArray<T, LANES>,
+    D: DistanceFunction<T, LANES>,
 {
     {
         // Randomly select first centroid
@@ -38,6 +40,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::EuclideanDistance;
     use test::Bencher;
 
     #[bench]
@@ -69,7 +72,7 @@ mod tests {
         let mut rnd = rand::rngs::StdRng::seed_from_u64(1337);
         let mut samples = vec![T::zero(); sample_cnt * sample_dims];
         samples.iter_mut().for_each(|v| *v = rnd.gen_range(T::zero()..T::one()));
-        let kmean: KMeans<_, LANES> = KMeans::new(samples, sample_cnt, sample_dims);
+        let kmean: KMeans<_, LANES, _> = KMeans::new(samples, sample_cnt, sample_dims, EuclideanDistance);
         let mut state = KMeansState::new::<LANES>(sample_cnt, kmean.p_sample_dims, k);
         let conf = KMeansConfig::build().random_generator(rnd).build();
 

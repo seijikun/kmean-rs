@@ -19,7 +19,7 @@ fn main() {
 
     // Calculate kmeans, using kmean++ as initialization-method
     // KMeans<_, 8> specifies to use f64 SIMD vectors with 8 lanes (e.g. AVX512)
-    let kmean: KMeans<_, 8> = KMeans::new(samples, sample_cnt, sample_dims);
+    let kmean: KMeans<f64, 8, _> = KMeans::new(samples, sample_cnt, sample_dims, EuclideanDistance);
     let result = kmean.kmeans_lloyd(k, max_iter, KMeans::init_kmeanplusplus, &KMeansConfig::default());
 
     println!("Centroids: {:?}", result.centroids);
@@ -40,3 +40,7 @@ For performance-reasons, all calculations are done on bare vectors, using hand-w
 - KMean++
 - random partition
 - random sample
+
+## Supported distance functions
+- Euclidean distance
+- Histogram distance
