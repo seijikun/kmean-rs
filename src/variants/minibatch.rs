@@ -1,3 +1,4 @@
+use crate::api::DistanceFunction;
 use crate::memory::*;
 use crate::{KMeans, KMeansConfig, KMeansState};
 use rand::prelude::*;
@@ -19,21 +20,24 @@ impl BatchInfo {
     }
 }
 
-pub(crate) struct Minibatch<T, const LANES: usize>
+pub(crate) struct Minibatch<T, const LANES: usize, D>
 where
     T: Primitive,
     LaneCount<LANES>: SupportedLaneCount,
+    D: DistanceFunction<T, LANES>,
 {
-    _p: std::marker::PhantomData<T>,
+    _p: std::marker::PhantomData<(T, D)>,
 }
-impl<T, const LANES: usize> Minibatch<T, LANES>
+
+impl<T, const LANES: usize, D> Minibatch<T, LANES, D>
 where
     T: Primitive,
     LaneCount<LANES>: SupportedLaneCount,
     Simd<T, LANES>: SupportedSimdArray<T, LANES>,
+    D: DistanceFunction<T, LANES>,
 {
     fn update_cluster_assignments(
-        data: &KMeans<T, LANES>, state: &mut KMeansState<T>, batch: &BatchInfo, shuffled_samples: &[T], limit_k: Option<usize>,
+        data: &KMeans<T, LANES, D>, state: &mut KMeansState<T>, batch: &BatchInfo, shuffled_samples: &[T], limit_k: Option<usize>,
     ) {
         let centroids = &state.centroids;
         let k = limit_k.unwrap_or(state.k);
@@ -52,15 +56,7 @@ where
                 let (best_idx, best_dist) = centroids
                     .chunks_exact(data.p_sample_dims)
                     .take(k)
-                    .map(|c| {
-                        s.chunks_exact(LANES)
-                            .map(|i| Simd::from_slice(i))
-                            .zip(c.chunks_exact(LANES).map(|i| Simd::from_slice(i)))
-                            .map(|(sp, cp)| sp - cp) // <sample> - <centroid>
-                            .map(|v| v * v) // <vec_components> ^2
-                            .sum::<Simd<T, LANES>>() // sum(<vec_components>^2)
-                            .reduce_sum() // sum(sum(<vec_components>^2))
-                    })
+                    .map(|c| data.distance_fn.distance(s, c))
                     .enumerate()
                     .min_by(|(_, d0), (_, d1)| d0.partial_cmp(d1).unwrap())
                     .unwrap();
@@ -69,7 +65,7 @@ where
             });
     }
 
-    fn update_centroids(data: &KMeans<T, LANES>, state: &mut KMeansState<T>, batch: &BatchInfo, shuffled_samples: &[T]) {
+    fn update_centroids(data: &KMeans<T, LANES, D>, state: &mut KMeansState<T>, batch: &BatchInfo, shuffled_samples: &[T]) {
         let centroid_frequency = &mut state.centroid_frequency;
         let centroids = &mut state.centroids;
         let assignments = &state.assignments;
@@ -92,7 +88,7 @@ where
             });
     }
 
-    fn shuffle_samples(data: &KMeans<T, LANES>, config: &KMeansConfig<'_, T>) -> (Vec<usize>, Vec<T>) {
+    fn shuffle_samples(data: &KMeans<T, LANES, D>, config: &KMeansConfig<'_, T>) -> (Vec<usize>, Vec<T>) {
         let mut idxs: Vec<usize> = (0..data.sample_cnt).collect();
         idxs.shuffle(config.rnd.borrow_mut().deref_mut());
 
@@ -119,10 +115,10 @@ where
 
     #[inline(always)]
     pub fn calculate<F>(
-        data: &KMeans<T, LANES>, batch_size: usize, k: usize, max_iter: usize, init: F, config: &KMeansConfig<'_, T>,
+        data: &KMeans<T, LANES, D>, batch_size: usize, k: usize, max_iter: usize, init: F, config: &KMeansConfig<'_, T>,
     ) -> KMeansState<T>
     where
-        for<'c> F: FnOnce(&KMeans<T, LANES>, &mut KMeansState<T>, &KMeansConfig<'c, T>),
+        for<'c> F: FnOnce(&KMeans<T, LANES, D>, &mut KMeansState<T>, &KMeansConfig<'c, T>),
     {
         assert!(k <= data.sample_cnt);
         assert!(batch_size <= data.sample_cnt);
@@ -193,7 +189,7 @@ where
 mod tests {
     use super::*;
     use crate::helpers::testing::{assert_kmeans_result_eq, KMeansShouldResult};
-    use crate::AbortStrategy;
+    use crate::{AbortStrategy, EuclideanDistance};
 
     #[test]
     fn iris_dataset_f64() {
@@ -212,7 +208,7 @@ mod tests {
             1.8, 4.8, 1.8, 5.4, 2.1, 5.6, 2.4, 5.1, 2.3, 5.1, 1.9, 5.9, 2.3, 5.7, 2.5, 5.2, 2.3, 5.0, 1.9, 5.2, 2.0, 5.4, 2.3, 5.1, 1.8,
         ];
 
-        let kmean: KMeans<f64, 8> = KMeans::new(samples, 150, 2);
+        let kmean: KMeans<f64, 8, _> = KMeans::new(samples, 150, 2, EuclideanDistance);
         let rnd = rand::rngs::StdRng::seed_from_u64(3);
         let conf = KMeansConfig::build()
             .random_generator(rnd)
@@ -291,7 +287,7 @@ mod tests {
             1.8, 4.8, 1.8, 5.4, 2.1, 5.6, 2.4, 5.1, 2.3, 5.1, 1.9, 5.9, 2.3, 5.7, 2.5, 5.2, 2.3, 5.0, 1.9, 5.2, 2.0, 5.4, 2.3, 5.1, 1.8,
         ];
 
-        let kmean: KMeans<f32, 8> = KMeans::new(samples, 150, 2);
+        let kmean: KMeans<f32, 8, _> = KMeans::new(samples, 150, 2, EuclideanDistance);
         let rnd = rand::rngs::StdRng::seed_from_u64(3);
         let conf = KMeansConfig::build()
             .random_generator(rnd)

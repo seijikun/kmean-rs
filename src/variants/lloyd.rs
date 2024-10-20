@@ -1,21 +1,25 @@
+use crate::api::DistanceFunction;
 use crate::memory::*;
 use crate::{KMeans, KMeansConfig, KMeansState};
 use std::simd::{LaneCount, Simd, SupportedLaneCount};
 
-pub(crate) struct Lloyd<T, const LANES: usize>
+pub(crate) struct Lloyd<T, const LANES: usize, D>
 where
     T: Primitive,
     LaneCount<LANES>: SupportedLaneCount,
+    D: DistanceFunction<T, LANES>,
 {
-    _p: std::marker::PhantomData<T>,
+    _p: std::marker::PhantomData<(T, D)>,
 }
-impl<T, const LANES: usize> Lloyd<T, LANES>
+
+impl<T, const LANES: usize, D> Lloyd<T, LANES, D>
 where
     T: Primitive,
     LaneCount<LANES>: SupportedLaneCount,
     Simd<T, LANES>: SupportedSimdArray<T, LANES>,
+    D: DistanceFunction<T, LANES>,
 {
-    fn update_centroids(data: &KMeans<T, LANES>, state: &mut KMeansState<T>) -> T {
+    fn update_centroids(data: &KMeans<T, LANES, D>, state: &mut KMeansState<T>) -> T {
         let chunks_per_sample = data.p_sample_dims / LANES;
         // Sum all samples in a cluster together into new_centroids
         // Count non-empty clusters
@@ -118,9 +122,9 @@ where
     }
 
     #[inline(always)]
-    pub fn calculate<F>(data: &KMeans<T, LANES>, k: usize, max_iter: usize, init: F, config: &KMeansConfig<'_, T>) -> KMeansState<T>
+    pub fn calculate<F>(data: &KMeans<T, LANES, D>, k: usize, max_iter: usize, init: F, config: &KMeansConfig<'_, T>) -> KMeansState<T>
     where
-        for<'c> F: FnOnce(&KMeans<T, LANES>, &mut KMeansState<T>, &KMeansConfig<'c, T>),
+        for<'c> F: FnOnce(&KMeans<T, LANES, D>, &mut KMeansState<T>, &KMeansConfig<'c, T>),
     {
         assert!(k <= data.sample_cnt);
 
@@ -154,6 +158,7 @@ where
 mod tests {
     use super::*;
     use crate::helpers::testing::{self, assert_kmeans_result_eq};
+    use crate::EuclideanDistance;
     use rand::prelude::*;
 
     #[test]
@@ -173,7 +178,7 @@ mod tests {
             1.8, 4.8, 1.8, 5.4, 2.1, 5.6, 2.4, 5.1, 2.3, 5.1, 1.9, 5.9, 2.3, 5.7, 2.5, 5.2, 2.3, 5.0, 1.9, 5.2, 2.0, 5.4, 2.3, 5.1, 1.8,
         ];
 
-        let kmean: KMeans<f64, 8> = KMeans::new(samples, 150, 2);
+        let kmean: KMeans<f64, 8, _> = KMeans::new(samples, 150, 2, EuclideanDistance);
         let rnd = rand::rngs::StdRng::seed_from_u64(1);
         let conf = KMeansConfig::build().random_generator(rnd).build();
         let res = kmean.kmeans_lloyd(3, 100, KMeans::init_kmeanplusplus, &conf);
@@ -244,7 +249,7 @@ mod tests {
             1.8, 4.8, 1.8, 5.4, 2.1, 5.6, 2.4, 5.1, 2.3, 5.1, 1.9, 5.9, 2.3, 5.7, 2.5, 5.2, 2.3, 5.0, 1.9, 5.2, 2.0, 5.4, 2.3, 5.1, 1.8,
         ];
 
-        let kmean: KMeans<f32, 8> = KMeans::new(samples, 150, 2);
+        let kmean: KMeans<f32, 8, _> = KMeans::new(samples, 150, 2, EuclideanDistance);
         let rnd = rand::rngs::StdRng::seed_from_u64(1);
         let conf = KMeansConfig::build().random_generator(rnd).build();
         let res = kmean.kmeans_lloyd(3, 100, KMeans::init_kmeanplusplus, &conf);
@@ -289,14 +294,14 @@ mod tests {
         let samples = vec![1.0, 0.0, 2.0, 0.0, 3.0, 0.0];
         let initial_centroids = [2.0, 0.0, 1337.0, 0.0];
 
-        let kmean = KMeans::new(samples, 3, 2);
+        let kmean = KMeans::new(samples, 3, 2, EuclideanDistance);
         let rnd = rand::rngs::StdRng::seed_from_u64(1);
         let conf = KMeansConfig::build().random_generator(rnd).build();
 
         let res = kmean.kmeans_lloyd(
             2,
             1,
-            |kmean: &KMeans<f64, 8>, state: &mut KMeansState<f64>, _| {
+            |kmean: &KMeans<f64, 8, _>, state: &mut KMeansState<f64>, _| {
                 // p_<array> arrays are padded to p_sample_dims!
                 state.centroids[0] = initial_centroids[0];
                 state.centroids[1] = initial_centroids[1];

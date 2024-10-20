@@ -146,6 +146,10 @@ impl<T: Primitive> KMeansState<T> {
     }
 }
 
+pub trait DistanceFunction<T, const LANES: usize>: Send + Sync {
+    fn distance(&self, a: &[T], b: &[T]) -> T;
+}
+
 /// Entrypoint of this crate's API-Surface.
 ///
 /// Create an instance of this struct, giving the samples you want to operate on. The primitive type
@@ -165,7 +169,8 @@ impl<T: Primitive> KMeansState<T> {
 /// - `T`: The type of primitive to work with (e.g. f32 of f64)
 /// - `LANES`: The amount of SIMD lanes (values in one SIMD vector) to limit the generated code to
 ///   Note that the generated code selects the appropriate instructions for every platform
-pub struct KMeans<T, const LANES: usize>
+/// - `D`: The distance function to use. Default is Euclidean distance.
+pub struct KMeans<T, const LANES: usize, D: DistanceFunction<T, LANES>>
 where
     T: Primitive,
     LaneCount<LANES>: SupportedLaneCount,
@@ -175,8 +180,9 @@ where
     pub(crate) sample_dims: usize,
     pub(crate) p_sample_dims: usize,
     pub(crate) p_samples: Vec<T>,
+    pub(crate) distance_fn: D,
 }
-impl<T, const LANES: usize> KMeans<T, LANES>
+impl<T, const LANES: usize, D: DistanceFunction<T, LANES>> KMeans<T, LANES, D>
 where
     T: Primitive,
     LaneCount<LANES>: SupportedLaneCount,
@@ -188,7 +194,8 @@ where
     /// - **samples**: Vector of samples [row-major] = [<sample0>,<sample1>,<sample2>,...]
     /// - **sample_cnt**: Amount of samples, contained in the passed **samples** vector
     /// - **sample_dims**: Amount of dimensions each sample from the **sample** vector has
-    pub fn new(samples: Vec<T>, sample_cnt: usize, sample_dims: usize) -> Self {
+    /// - **distance_fn**: Distance function to use for the calculation
+    pub fn new(samples: Vec<T>, sample_cnt: usize, sample_dims: usize, distance_fn: D) -> Self {
         assert!(samples.len() == sample_cnt * sample_dims);
         let p_sample_dims = helpers::multiple_roundup(sample_dims, LANES);
 
@@ -209,6 +216,7 @@ where
             sample_dims,
             p_sample_dims,
             p_samples: aligned_samples,
+            distance_fn,
         }
     }
 
@@ -224,14 +232,7 @@ where
             .zip(state.centroid_distances.par_iter_mut())
             .for_each(|((s, assignment), centroid_dist)| {
                 let centroid = centroids.chunks_exact(self.p_sample_dims).nth(assignment).unwrap();
-                *centroid_dist = s
-                    .chunks_exact(LANES)
-                    .map(|i| Simd::from_slice(i))
-                    .zip(centroid.chunks_exact(LANES).map(|i| Simd::from_slice(i)))
-                    .map(|(sp, cp)| sp - cp) // <sample> - <centroid>
-                    .map(|v| v * v) // <vec_components> ^2
-                    .sum::<Simd<T, LANES>>() // sum(<vec_components>^2)
-                    .reduce_sum();
+                *centroid_dist = self.distance_fn.distance(s, centroid);
             });
     }
 
@@ -250,15 +251,7 @@ where
                 let (best_idx, best_dist) = centroids
                     .chunks_exact(self.p_sample_dims)
                     .take(k)
-                    .map(|c| {
-                        s.chunks_exact(LANES)
-                            .map(|i| Simd::from_slice(i))
-                            .zip(c.chunks_exact(LANES).map(|i| Simd::from_slice(i)))
-                            .map(|(sp, cp)| sp - cp) // <sample> - <centroid>
-                            .map(|v| v * v) // <vec_components> ^2
-                            .sum::<Simd<T, LANES>>() // sum(<vec_components>^2)
-                            .reduce_sum()
-                    })
+                    .map(|c| self.distance_fn.distance(s, c))
                     .enumerate()
                     .min_by(|(_, d0), (_, d1)| d0.partial_cmp(d1).unwrap())
                     .unwrap();
@@ -303,7 +296,7 @@ where
     ///
     /// // Calculate kmeans, using kmean++ as initialization-method
     /// // KMeans<_, 8> specifies to use f64 SIMD vectors with 8 lanes (e.g. AVX512)
-    /// let kmean: KMeans<_, 8> = KMeans::new(samples, sample_cnt, sample_dims);
+    /// let kmean: KMeans<_, 8, _> = KMeans::new(samples, sample_cnt, sample_dims, EuclideanDistance);
     /// let result = kmean.kmeans_lloyd(k, max_iter, KMeans::init_kmeanplusplus, &KMeansConfig::default());
     ///
     /// println!("Centroids: {:?}", result.centroids);
@@ -312,7 +305,7 @@ where
     /// ```
     pub fn kmeans_lloyd<F>(&self, k: usize, max_iter: usize, init: F, config: &KMeansConfig<'_, T>) -> KMeansState<T>
     where
-        for<'c> F: FnOnce(&KMeans<T, LANES>, &mut KMeansState<T>, &KMeansConfig<'c, T>),
+        for<'c> F: FnOnce(&KMeans<T, LANES, D>, &mut KMeansState<T>, &KMeansConfig<'c, T>),
     {
         crate::variants::Lloyd::calculate(self, k, max_iter, init, config)
     }
@@ -342,7 +335,7 @@ where
     ///
     /// // Calculate kmeans, using kmean++ as initialization-method
     /// // KMeans<_, 8> specifies to use f64 SIMD vectors with 8 lanes (e.g. AVX512)
-    /// let kmean: KMeans<_, 8> = KMeans::new(samples, sample_cnt, sample_dims);
+    /// let kmean: KMeans<_, 8, _> = KMeans::new(samples, sample_cnt, sample_dims, EuclideanDistance);
     /// let result = kmean.kmeans_minibatch(4, k, max_iter, KMeans::init_random_sample, &KMeansConfig::default());
     ///
     /// println!("Centroids: {:?}", result.centroids);
@@ -351,7 +344,7 @@ where
     /// ```
     pub fn kmeans_minibatch<F>(&self, batch_size: usize, k: usize, max_iter: usize, init: F, config: &KMeansConfig<'_, T>) -> KMeansState<T>
     where
-        for<'c> F: FnOnce(&KMeans<T, LANES>, &mut KMeansState<T>, &KMeansConfig<'c, T>),
+        for<'c> F: FnOnce(&KMeans<T, LANES, D>, &mut KMeansState<T>, &KMeansConfig<'c, T>),
         T: Primitive,
         LaneCount<LANES>: SupportedLaneCount,
         Simd<T, LANES>: SupportedSimdArray<T, LANES>,
@@ -372,7 +365,7 @@ where
     ///
     /// ## Note
     /// This method is not meant for direct invocation. Pass a reference to it, to an instance-method of [`KMeans`].
-    pub fn init_kmeanplusplus(kmean: &KMeans<T, LANES>, state: &mut KMeansState<T>, config: &KMeansConfig<'_, T>) {
+    pub fn init_kmeanplusplus(kmean: &KMeans<T, LANES, D>, state: &mut KMeansState<T>, config: &KMeansConfig<'_, T>) {
         crate::inits::kmeanplusplus::calculate(kmean, state, config);
     }
 
@@ -382,7 +375,7 @@ where
     /// This initialization method randomly partitions the samples into k partitions, and then calculates these partion's means.
     /// These means are then used as initial clusters.
     ///
-    pub fn init_random_partition(kmean: &KMeans<T, LANES>, state: &mut KMeansState<T>, config: &KMeansConfig<'_, T>) {
+    pub fn init_random_partition(kmean: &KMeans<T, LANES, D>, state: &mut KMeansState<T>, config: &KMeansConfig<'_, T>) {
         crate::inits::randompartition::calculate(kmean, state, config);
     }
 
@@ -393,7 +386,7 @@ where
     ///
     /// ## Note
     /// This method is not meant for direct invocation. Pass a reference to it, to an instance-method of [`KMeans`].
-    pub fn init_random_sample(kmean: &KMeans<T, LANES>, state: &mut KMeansState<T>, config: &KMeansConfig<'_, T>) {
+    pub fn init_random_sample(kmean: &KMeans<T, LANES, D>, state: &mut KMeansState<T>, config: &KMeansConfig<'_, T>) {
         crate::inits::randomsample::calculate(kmean, state, config);
     }
 
@@ -406,7 +399,7 @@ where
     /// ## Note
     /// This method must be invoked with a precomputed list of centroids. It then
     /// returns a closure that can be passed to the [`KMeans`] object.
-    pub fn init_precomputed(centroids: Vec<T>) -> impl Fn(&KMeans<T, LANES>, &mut KMeansState<T>, &KMeansConfig<'_, T>) {
+    pub fn init_precomputed(centroids: Vec<T>) -> impl Fn(&KMeans<T, LANES, D>, &mut KMeansState<T>, &KMeansConfig<'_, T>) {
         move |kmean, state, config| {
             crate::inits::precomputed::calculate(kmean, state, config, centroids.clone());
         }
@@ -416,6 +409,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::EuclideanDistance;
     use test::Bencher;
 
     #[test]
@@ -452,7 +446,7 @@ mod tests {
         let mut samples = vec![T::zero(); sample_cnt * sample_dims];
         samples.iter_mut().for_each(|i| *i = thread_rng().gen_range(T::zero()..T::one()));
 
-        let kmean = KMeans::new(samples, sample_cnt, sample_dims);
+        let kmean = KMeans::new(samples, sample_cnt, sample_dims, EuclideanDistance);
 
         let mut state = KMeansState::new::<LANES>(kmean.sample_cnt, kmean.p_sample_dims, k);
         state.centroids.iter_mut().zip(kmean.p_samples.iter()).for_each(|(c, s)| *c = *s);
@@ -521,7 +515,7 @@ mod tests {
 
         let mut samples = vec![T::zero(); sample_cnt * sample_dims];
         samples.iter_mut().for_each(|v| *v = thread_rng().gen_range(T::zero()..T::one()));
-        let kmean: KMeans<T, LANES> = KMeans::new(samples, sample_cnt, sample_dims);
+        let kmean: KMeans<T, LANES, _> = KMeans::new(samples, sample_cnt, sample_dims, EuclideanDistance);
 
         let mut state = KMeansState::new::<LANES>(kmean.sample_cnt, kmean.p_sample_dims, k);
         state.centroids.iter_mut().zip(kmean.p_samples.iter()).for_each(|(c, s)| *c = *s);
