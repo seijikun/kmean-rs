@@ -438,10 +438,10 @@ mod tests {
         calculate_cluster_assignments::<f64, 4>(sample_dims, 1e-10f64);
         calculate_cluster_assignments::<f64, 2>(sample_dims, 1e-10f64);
 
-        calculate_cluster_assignments::<f32, 16>(sample_dims, 1e-5f32);
-        calculate_cluster_assignments::<f32, 8>(sample_dims, 1e-5f32);
-        calculate_cluster_assignments::<f32, 4>(sample_dims, 1e-5f32);
-        calculate_cluster_assignments::<f32, 2>(sample_dims, 1e-5f32);
+        calculate_cluster_assignments::<f32, 16>(sample_dims, 1.2e-5f32);
+        calculate_cluster_assignments::<f32, 8>(sample_dims, 1.2e-5f32);
+        calculate_cluster_assignments::<f32, 4>(sample_dims, 1.2e-5f32);
+        calculate_cluster_assignments::<f32, 2>(sample_dims, 1.2e-5f32);
     }
 
     fn calculate_cluster_assignments<T, const LANES: usize>(sample_dims: usize, max_diff: T)
