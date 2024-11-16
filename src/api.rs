@@ -453,7 +453,8 @@ mod tests {
         let k = 5;
 
         let mut samples = vec![T::zero(); sample_cnt * sample_dims];
-        samples.iter_mut().for_each(|i| *i = thread_rng().gen_range(T::zero()..T::one()));
+        let mut rng = rand::rngs::StdRng::seed_from_u64(1337);
+        samples.iter_mut().for_each(|i| *i = rng.gen_range(T::zero()..T::one()));
 
         let kmean = KMeans::new(samples, sample_cnt, sample_dims, EuclideanDistance);
 
@@ -523,7 +524,8 @@ mod tests {
         let k = LANES;
 
         let mut samples = vec![T::zero(); sample_cnt * sample_dims];
-        samples.iter_mut().for_each(|v| *v = thread_rng().gen_range(T::zero()..T::one()));
+        let mut rng = rand::rngs::StdRng::seed_from_u64(1337);
+        samples.iter_mut().for_each(|v| *v = rng.gen_range(T::zero()..T::one()));
         let kmean: KMeans<T, LANES, _> = KMeans::new(samples, sample_cnt, sample_dims, EuclideanDistance);
 
         let mut state = KMeansState::new::<LANES>(kmean.sample_cnt, kmean.p_sample_dims, k);
