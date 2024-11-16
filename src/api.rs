@@ -1,6 +1,5 @@
 use crate::memory::*;
 use crate::{helpers, AbortStrategy};
-use core::simd::num::SimdFloat;
 use core::simd::{LaneCount, Simd, SupportedLaneCount};
 use rand::prelude::*;
 use rayon::prelude::*;
@@ -30,7 +29,7 @@ pub struct KMeansConfig<'a, T: Primitive> {
     /// The abort-strategy to use for the running calculation
     pub(crate) abort_strategy: AbortStrategy<T>,
 }
-impl<'a, T: Primitive> Default for KMeansConfig<'a, T> {
+impl<T: Primitive> Default for KMeansConfig<'_, T> {
     fn default() -> Self {
         Self {
             init_done: &|_| {},
@@ -50,7 +49,7 @@ impl<'a, T: Primitive> KMeansConfig<'a, T> {
         }
     }
 }
-impl<'a, T: Primitive> std::fmt::Debug for KMeansConfig<'a, T> {
+impl<T: Primitive> std::fmt::Debug for KMeansConfig<'_, T> {
     fn fmt(&self, _: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { Ok(()) }
 }
 
