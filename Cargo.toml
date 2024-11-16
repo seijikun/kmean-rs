@@ -1,6 +1,6 @@
 [package]
 name = "kmeans"
-version = "0.12.0"
+version = "1.0.0"
 authors = ["Markus Ebner <hiwatari.seiji@gmail.com>"]
 edition = "2021"
 description = "Small and fast library for k-means clustering calculations."
