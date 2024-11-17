@@ -73,39 +73,11 @@ where
 
 // ##################################################################
 
-pub(crate) struct AlignedFloatVec<const LANES: usize>;
-impl<const LANES: usize> AlignedFloatVec<LANES> {
-    pub fn create<T: Primitive>(size: usize) -> Vec<T> {
-        use std::alloc::{alloc_zeroed, Layout};
-
-        assert_eq!(size % LANES, 0);
-        let layout =
-            Layout::from_size_align(size * std::mem::size_of::<T>(), LANES * std::mem::size_of::<T>()).expect("Illegal aligned allocation");
-        unsafe {
-            let aligned_ptr = alloc_zeroed(layout) as *mut T;
-            let resvec = Vec::from_raw_parts(aligned_ptr, size, size);
-            debug_assert_eq!(
-                (resvec.get_unchecked(0) as *const T).align_offset(LANES * std::mem::size_of::<T>()),
-                0
-            );
-            resvec
-        }
-    }
-    pub fn create_uninitialized<T: Primitive>(size: usize) -> Vec<T> {
-        use std::alloc::{alloc, Layout};
-
-        assert_eq!(size % LANES, 0);
-        let layout =
-            Layout::from_size_align(size * std::mem::size_of::<T>(), LANES * std::mem::size_of::<T>()).expect("Illegal aligned allocation");
-        unsafe {
-            let aligned_ptr = alloc(layout) as *mut T;
-            let resvec = Vec::from_raw_parts(aligned_ptr, size, size);
-            debug_assert_eq!(
-                (resvec.get_unchecked(0) as *const T).align_offset(LANES * std::mem::size_of::<T>()),
-                0
-            );
-            resvec
-        }
+pub(crate) type SIMDAlignBuffer<T> = aligned_vec::AVec<T, aligned_vec::RuntimeAlign>;
+pub(crate) struct SIMDAlignBufferHelper;
+impl SIMDAlignBufferHelper {
+    pub fn create<T: Primitive, const LANES: usize>(size: usize) -> SIMDAlignBuffer<T> {
+        aligned_vec::avec_rt!([ LANES * std::mem::size_of::<T>() ]| Default::default(); size)
     }
 }
 
@@ -120,7 +92,7 @@ impl<const LANES: usize> AlignedFloatVec<LANES> {
 /// the contained (padded) elements for users.
 #[derive(Clone, Debug)]
 pub struct StrideBuffer<T> {
-    pub(crate) bfr: Vec<T>,
+    pub(crate) bfr: SIMDAlignBuffer<T>,
     pub(crate) stride: usize,
     pub(crate) centroid_cnt: usize,
     pub(crate) centroid_dim: usize,
@@ -129,7 +101,7 @@ impl<T: Primitive> StrideBuffer<T> {
     pub fn new<const LANES: usize>(centroid_cnt: usize, centroid_dim: usize) -> Self {
         let stride = helpers::multiple_roundup(centroid_dim, LANES);
         Self {
-            bfr: AlignedFloatVec::<LANES>::create(stride * centroid_cnt),
+            bfr: SIMDAlignBufferHelper::create::<T, LANES>(stride * centroid_cnt),
             stride,
             centroid_cnt,
             centroid_dim,
@@ -142,7 +114,7 @@ impl<T: Primitive> StrideBuffer<T> {
         let centroid_cnt = vec.len() / centroid_dim;
 
         let mut bfr = Self {
-            bfr: AlignedFloatVec::<LANES>::create(stride * centroid_cnt),
+            bfr: SIMDAlignBufferHelper::create::<T, LANES>(stride * centroid_cnt),
             stride,
             centroid_cnt,
             centroid_dim,
@@ -226,17 +198,19 @@ mod tests {
         for centroid_dim in 1..8 {
             let bfr: StrideBuffer<f32> = StrideBuffer::new::<8>(5, centroid_dim);
             assert_eq!(bfr.stride, 8);
+            assert_eq!(bfr.bfr.alignment(), 8 * std::mem::size_of::<f32>());
             assert_eq!(bfr.centroid_dim, centroid_dim);
             assert_eq!(bfr.centroid_cnt, 5);
         }
 
         {
-            let mut bfr: StrideBuffer<f32> = StrideBuffer::new::<8>(3, 9);
+            let mut bfr: StrideBuffer<f64> = StrideBuffer::new::<8>(3, 9);
             assert_eq!(bfr.stride, 16);
+            assert_eq!(bfr.bfr.alignment(), 8 * std::mem::size_of::<f64>());
             assert_eq!(bfr.centroid_dim, 9);
             assert_eq!(bfr.centroid_cnt, 3);
             bfr.set_nth_from_iter(1, [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0]);
-            assert_eq!(bfr.bfr, vec![
+            assert_eq!(bfr.bfr.to_vec(), vec![
                 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0,
                 9.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
             ]);
@@ -248,7 +222,7 @@ mod tests {
             assert_eq!(bfr.centroid_cnt, 4);
             assert_eq!(bfr.centroid_dim, 3);
             assert_eq!(bfr.stride, 4);
-            assert_eq!(bfr.bfr, vec![
+            assert_eq!(bfr.bfr.to_vec(), vec![
                 1.0, 2.0, 3.0, 0.0, 4.0, 5.0, 6.0, 0.0, 7.0, 8.0, 9.0, 0.0, 10.0, 11.0, 12.0, 0.0,
             ]);
             assert_eq!(bfr.to_vec(), src_bfr);
