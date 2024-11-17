@@ -15,13 +15,13 @@ where
 {
     kmean
         .p_samples
-        .chunks_exact(kmean.p_sample_dims)
+        .chunks_exact_stride()
         .choose_multiple(config.rnd.borrow_mut().deref_mut(), state.k)
         .iter()
         .cloned()
         .enumerate()
         .for_each(|(ci, c)| {
             // Copy randomly chosen centroids into state.centroids
-            state.set_centroid_from_iter(ci, c.iter().cloned());
+            state.centroids.set_nth_from_iter(ci, c.iter().cloned());
         });
 }

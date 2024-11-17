@@ -46,14 +46,14 @@ where
 
         // manually calculate work-packet size, because rayon does not do static scheduling (which is more apropriate here)
         let work_packet_size = batch.batch_size / rayon::current_num_threads();
-        shuffled_samples[batch.gen_range(data.p_sample_dims)]
-            .par_chunks_exact(data.p_sample_dims)
+        shuffled_samples[batch.gen_range(data.p_samples.stride)]
+            .par_chunks_exact(data.p_samples.stride)
             .with_min_len(work_packet_size)
             .zip(state.assignments[batch.gen_range(1)].par_iter_mut())
             .zip(state.centroid_distances[batch.gen_range(1)].par_iter_mut())
             .for_each(|((s, assignment), centroid_dist)| {
                 let (best_idx, best_dist) = centroids
-                    .chunks_exact(data.p_sample_dims)
+                    .chunks_exact_stride()
                     .take(k)
                     .map(|c| data.distance_fn.distance(s, c))
                     .enumerate()
@@ -69,17 +69,18 @@ where
         let centroids = &mut state.centroids;
         let assignments = &state.assignments;
 
-        shuffled_samples[batch.gen_range(data.p_sample_dims)]
-            .chunks_exact(data.p_sample_dims)
+        shuffled_samples[batch.gen_range(data.p_samples.stride)]
+            .chunks_exact(data.p_samples.stride)
             .zip(assignments[batch.gen_range(1)].iter().cloned())
             .for_each(|(sample, assignment)| {
                 centroid_frequency[assignment] += 1;
                 let learn_rate = T::one() / T::from(centroid_frequency[assignment]).unwrap();
                 let inv_learn_rate = T::one() - learn_rate;
                 centroids
+                    .bfr
                     .iter_mut()
-                    .skip(assignment * data.p_sample_dims)
-                    .take(data.p_sample_dims)
+                    .skip(assignment * data.p_samples.stride)
+                    .take(data.p_samples.stride)
                     .zip(sample.iter().cloned())
                     .for_each(|(c, s)| {
                         *c = inv_learn_rate * *c + learn_rate * s;
@@ -87,20 +88,14 @@ where
             });
     }
 
-    fn shuffle_samples(data: &KMeans<T, LANES, D>, config: &KMeansConfig<'_, T>) -> (Vec<usize>, Vec<T>) {
+    fn shuffle_samples(data: &KMeans<T, LANES, D>, config: &KMeansConfig<'_, T>) -> (Vec<usize>, StrideBuffer<T>) {
         let mut idxs: Vec<usize> = (0..data.sample_cnt).collect();
         idxs.shuffle(config.rnd.borrow_mut().deref_mut());
 
-        let mut shuffled_samples = AlignedFloatVec::<LANES>::create_uninitialized(data.p_samples.len());
-        shuffled_samples
-            .chunks_exact_mut(data.p_sample_dims)
-            .zip(
-                idxs.iter()
-                    .map(|i| &data.p_samples[(i * data.p_sample_dims)..(i * data.p_sample_dims) + data.p_sample_dims]),
-            )
-            .for_each(|(dst, src)| {
-                dst.copy_from_slice(src);
-            });
+        let mut shuffled_samples = StrideBuffer::new::<LANES>(data.sample_cnt, data.sample_dims);
+        shuffled_samples.iter_mut().zip(idxs.iter()).for_each(|(dst, src_idx)| {
+            dst.copy_from_slice(&data.p_samples[*src_idx]);
+        });
 
         (idxs, shuffled_samples)
     }
@@ -125,7 +120,7 @@ where
         // Copy and shuffle sample_data, then only take consecutive blocks (with batch_size) from there
         let (shuffle_idxs, shuffled_samples) = Self::shuffle_samples(data, config);
 
-        let mut state = KMeansState::new::<LANES>(data.sample_cnt, data.p_sample_dims, k);
+        let mut state = KMeansState::new::<LANES>(data.sample_cnt, data.sample_dims, k);
         state.distsum = T::infinity();
 
         // Initialize clusters and notify subscriber
@@ -141,7 +136,7 @@ where
                 start_idx: 0,
                 batch_size: data.sample_cnt,
             },
-            &shuffled_samples,
+            &shuffled_samples.bfr, //TODO
             None,
         );
 
@@ -152,9 +147,9 @@ where
                 start_idx: config.rnd.borrow_mut().gen_range(0..data.sample_cnt - batch_size),
             };
 
-            Self::update_cluster_assignments(data, &mut state, &batch, &shuffled_samples, None);
+            Self::update_cluster_assignments(data, &mut state, &batch, &shuffled_samples.bfr, None);
             let new_distsum = state.centroid_distances.iter().cloned().sum();
-            Self::update_centroids(data, &mut state, &batch, &shuffled_samples);
+            Self::update_centroids(data, &mut state, &batch, &shuffled_samples.bfr);
 
             // Notify subscriber about finished iteration
             (config.iteration_done)(&state, i, new_distsum);
@@ -180,7 +175,7 @@ where
                 *distsum = centroid_distances.iter().cloned().sum();
             });
         });
-        state.remove_padding(data.sample_dims)
+        state
     }
 }
 
@@ -265,7 +260,6 @@ mod tests {
             ],
         };
 
-        assert_eq!(res.sample_dims, 8);
         assert_kmeans_result_eq(should, res);
     }
 
@@ -329,7 +323,6 @@ mod tests {
             centroids: vec![4.297827, 1.3152173, 1.4716982, 0.28679252, 5.529412, 2.0372543],
         };
 
-        assert_eq!(res.sample_dims, 8);
         assert_kmeans_result_eq(should, res);
     }
 }

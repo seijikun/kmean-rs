@@ -20,11 +20,10 @@ where
     D: DistanceFunction<T, LANES>,
 {
     fn update_centroids(data: &KMeans<T, LANES, D>, state: &mut KMeansState<T>) -> T {
-        let chunks_per_sample = data.p_sample_dims / LANES;
         // Sum all samples in a cluster together into new_centroids
         // Count non-empty clusters
         let mut used_centroids_cnt = 0;
-        let mut new_centroids = AlignedFloatVec::<LANES>::create(state.centroids.len());
+        let mut new_centroids = StrideBuffer::new::<LANES>(state.centroids.centroid_cnt, state.centroids.centroid_dim);
         let mut new_distsum = T::zero();
 
         let (centroid_frequency, assignments, centroid_distances) =
@@ -35,13 +34,12 @@ where
             });
             s.spawn(|_| {
                 data.p_samples
-                    .chunks_exact(data.p_sample_dims)
+                    .chunks_exact_stride()
                     .zip(assignments.iter().cloned())
                     .for_each(|(s, centroid_id)| {
                         new_centroids
+                            .nth_stride_mut(centroid_id)
                             .chunks_exact_mut(LANES)
-                            .skip(centroid_id * chunks_per_sample)
-                            .take(chunks_per_sample)
                             .zip(s.chunks_exact(LANES).map(|i| Simd::from_slice(i)))
                             .for_each(|(c, s)| {
                                 let c_simd = Simd::from_slice(c);
@@ -83,19 +81,21 @@ where
                     // new_centroids is a sum of all points within a centroid here.
                     // Subtract chosen sample from its previous centroid
                     new_centroids
+                        .bfr
                         .iter_mut()
-                        .skip(prev_centroid_id * data.p_sample_dims)
-                        .take(data.p_sample_dims)
-                        .zip(data.p_samples.iter().skip(sample_id * data.p_sample_dims).cloned())
+                        .skip(prev_centroid_id * data.p_samples.stride)
+                        .take(data.p_samples.stride)
+                        .zip(data.p_samples.bfr.iter().skip(sample_id * data.p_samples.stride).cloned())
                         .for_each(|(cv, sv)| {
                             *cv -= sv;
                         });
                     // Chosen sample is single point in cluster -> set cluster's sum to chosen point
                     new_centroids
+                        .bfr
                         .iter_mut()
-                        .skip(i * data.p_sample_dims)
-                        .take(data.p_sample_dims)
-                        .zip(data.p_samples.iter().skip(sample_id * data.p_sample_dims).cloned())
+                        .skip(i * data.p_samples.stride)
+                        .take(data.p_samples.stride)
+                        .zip(data.p_samples.bfr.iter().skip(sample_id * data.p_samples.stride).cloned())
                         .for_each(|(cv, sv)| {
                             *cv = sv;
                         });
@@ -106,8 +106,8 @@ where
         // Calculate new centroids from updated cluster_assignments
         state
             .centroids
-            .chunks_exact_mut(data.p_sample_dims)
-            .zip(new_centroids.chunks_exact(data.p_sample_dims))
+            .chunks_exact_stride_mut()
+            .zip(new_centroids.chunks_exact_stride())
             .zip(state.centroid_frequency.iter().cloned())
             .for_each(|((c, nc), cfreq)| {
                 let cfreq_simd = Simd::<T, LANES>::splat(T::from(cfreq).unwrap());
@@ -128,7 +128,7 @@ where
     {
         assert!(k <= data.sample_cnt);
 
-        let mut state = KMeansState::new::<LANES>(data.sample_cnt, data.p_sample_dims, k);
+        let mut state = KMeansState::new::<LANES>(data.sample_cnt, data.sample_dims, k);
         state.distsum = T::infinity();
 
         // Initialize clusters and notify subscriber
@@ -150,7 +150,7 @@ where
 
         data.update_centroid_distances(&mut state);
         state.distsum = state.centroid_distances.iter().cloned().sum();
-        state.remove_padding(data.sample_dims)
+        state
     }
 }
 
@@ -228,7 +228,6 @@ mod tests {
             ],
         };
 
-        assert_eq!(res.sample_dims, 8);
         assert_kmeans_result_eq(should, res);
     }
 
@@ -285,7 +284,6 @@ mod tests {
             centroids: vec![4.2925925, 1.3592592, 1.462, 0.24599996, 5.626087, 2.0478265],
         };
 
-        assert_eq!(res.sample_dims, 8);
         assert_kmeans_result_eq(should, res);
     }
 
@@ -301,18 +299,18 @@ mod tests {
         let res = kmean.kmeans_lloyd(
             2,
             1,
-            |kmean: &KMeans<f64, 8, _>, state: &mut KMeansState<f64>, _| {
+            |_: &KMeans<f64, 8, _>, state: &mut KMeansState<f64>, _| {
                 // p_<array> arrays are padded to p_sample_dims!
-                state.centroids[0] = initial_centroids[0];
-                state.centroids[1] = initial_centroids[1];
-                state.centroids[kmean.p_sample_dims + 0] = initial_centroids[2];
-                state.centroids[kmean.p_sample_dims + 1] = initial_centroids[3];
+                state.centroids[0][0] = initial_centroids[0];
+                state.centroids[0][1] = initial_centroids[1];
+                state.centroids[1][0] = initial_centroids[2];
+                state.centroids[1][1] = initial_centroids[3];
             },
             &conf,
         );
         assert_eq!(res.distsum, 0.5);
         assert_eq!(&res.assignments, &[0, 0, 1]);
-        assert_eq!(&res.centroids, &[1.5, 0.0, 3.0, 0.0]);
+        assert_eq!(&res.centroids.to_vec(), &[1.5, 0.0, 3.0, 0.0]);
         assert_eq!(&res.centroid_frequency, &[2, 1]);
         assert_eq!(&res.centroid_distances, &[0.25, 0.25, 0.0]);
     }

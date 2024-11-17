@@ -69,10 +69,9 @@ pub(crate) mod testing {
             //assert_approx_eq!(should.centroid_distances[should_idx], actual.centroid_distances[actual_idx], CMP_EPSILON);
             assert_eq!(should_freq[&actual_idx], actual.centroid_frequency[actual_idx]);
             let should_spl_offset = should_idx * should.sample_dims;
-            let actual_spl_offset = actual_idx * should.sample_dims;
             for d in 0..should.sample_dims {
                 let should_centroid_dim = should.centroids[should_spl_offset + d];
-                let actual_centroid_dim = actual.centroids[actual_spl_offset + d];
+                let actual_centroid_dim = actual.centroids[actual_idx][d];
                 if should_centroid_dim.abs_sub(actual_centroid_dim) > cmp_epsilon {
                     panic!(
                         "Difference in calculated centroids too large.\n:Mapping(should -> actual): {:?}\nActual: {:?}\nShould: {:?}",

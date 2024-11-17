@@ -4,19 +4,19 @@ fn main() {
     let (sample_cnt, sample_dims, k, max_iter) = (20000, 200, 4, 100);
 
     // Generate some random data
-    let mut samples = vec![0.0f64;sample_cnt * sample_dims];
+    let mut samples = vec![0.0f64; sample_cnt * sample_dims];
     samples.iter_mut().for_each(|v| *v = rand::random());
 
-	let conf = KMeansConfig::build()
+    let conf = KMeansConfig::build()
         .abort_strategy(AbortStrategy::NoImprovementForXIterations {
             // Abort after there has not been an improvement for 5 iterations
             x: 5,
             // Only count as improvement if > 0.0005 difference
             threshold: 0.0005f64,
             // Do not directly abort after a negative improvement
-            abort_on_negative: false
+            abort_on_negative: false,
         })
-		.build();
+        .build();
 
     // Calculate kmeans, using kmean++ as initialization-method
     // KMeans<_, 8> specifies to use f64 SIMD vectors with 8 lanes (e.g. AVX512)

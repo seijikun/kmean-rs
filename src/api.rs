@@ -1,5 +1,5 @@
 use crate::memory::*;
-use crate::{helpers, AbortStrategy};
+use crate::AbortStrategy;
 use core::simd::{LaneCount, Simd, SupportedLaneCount};
 use rand::prelude::*;
 use rayon::prelude::*;
@@ -104,47 +104,23 @@ impl<'a, T: Primitive> KMeansConfigBuilder<'a, T> {
 pub struct KMeansState<T: Primitive> {
     pub k: usize,
     pub distsum: T,
-    pub centroids: Vec<T>,
+    pub centroids: StrideBuffer<T>,
     pub centroid_frequency: Vec<usize>,
     pub assignments: Vec<usize>,
     pub centroid_distances: Vec<T>,
-
-    pub(crate) sample_dims: usize,
 }
 impl<T: Primitive> KMeansState<T> {
     pub(crate) fn new<const LANES: usize>(sample_cnt: usize, sample_dims: usize, k: usize) -> Self {
         Self {
             k,
             distsum: T::zero(),
-            centroids: AlignedFloatVec::<LANES>::create(sample_dims * k),
+            centroids: StrideBuffer::new::<LANES>(k, sample_dims),
             centroid_frequency: vec![0usize; k],
             assignments: vec![0usize; sample_cnt],
             centroid_distances: vec![T::infinity(); sample_cnt],
-            sample_dims,
         }
-    }
-    pub(crate) fn set_centroid_from_iter(&mut self, idx: usize, src: impl Iterator<Item = T>) {
-        self.centroids
-            .iter_mut()
-            .skip(self.sample_dims * idx)
-            .take(self.sample_dims)
-            .zip(src)
-            .for_each(|(c, s)| *c = s);
-    }
-
-    pub(crate) fn remove_padding(mut self, sample_dims: usize) -> Self {
-        if self.sample_dims != sample_dims {
-            // Datastructure was padded -> undo
-            self.centroids = self
-                .centroids
-                .chunks_exact(self.sample_dims)
-                .flat_map(|chunk| chunk.iter().cloned().take(sample_dims))
-                .collect();
-        }
-        self
     }
 }
-
 
 /// A trait representing a customizable distance function for k-means clustering.
 ///
@@ -187,8 +163,7 @@ where
 {
     pub(crate) sample_cnt: usize,
     pub(crate) sample_dims: usize,
-    pub(crate) p_sample_dims: usize,
-    pub(crate) p_samples: Vec<T>,
+    pub(crate) p_samples: StrideBuffer<T>,
     pub(crate) distance_fn: D,
 }
 impl<T, const LANES: usize, D: DistanceFunction<T, LANES>> KMeans<T, LANES, D>
@@ -206,25 +181,11 @@ where
     /// - **distance_fn**: Distance function to use for the calculation
     pub fn new(samples: Vec<T>, sample_cnt: usize, sample_dims: usize, distance_fn: D) -> Self {
         assert!(samples.len() == sample_cnt * sample_dims);
-        let p_sample_dims = helpers::multiple_roundup(sample_dims, LANES);
-
-        // Recopy into new, properly aligned + padded buffer
-        let mut aligned_samples = AlignedFloatVec::<LANES>::create(sample_cnt * p_sample_dims);
-        if p_sample_dims == sample_dims {
-            aligned_samples.copy_from_slice(&samples);
-        } else {
-            for s in 0..sample_cnt {
-                for d in 0..sample_dims {
-                    aligned_samples.as_mut_slice()[s * p_sample_dims + d] = samples[s * sample_dims + d];
-                }
-            }
-        };
 
         Self {
             sample_cnt,
             sample_dims,
-            p_sample_dims,
-            p_samples: aligned_samples,
+            p_samples: StrideBuffer::from_slice::<LANES>(sample_dims, &samples),
             distance_fn,
         }
     }
@@ -233,15 +194,15 @@ where
         let centroids = &state.centroids;
 
         // manually calculate work-packet size, because rayon does not do static scheduling (which is more apropriate here)
-        let work_packet_size = self.p_samples.len() / self.p_sample_dims / rayon::current_num_threads();
+        let work_packet_size = self.p_samples.bfr.len() / self.p_samples.stride / rayon::current_num_threads();
         self.p_samples
-            .par_chunks_exact(self.p_sample_dims)
+            .bfr
+            .par_chunks_exact(self.p_samples.stride)
             .with_min_len(work_packet_size)
             .zip(state.assignments.par_iter().cloned())
             .zip(state.centroid_distances.par_iter_mut())
             .for_each(|((s, assignment), centroid_dist)| {
-                let centroid = centroids.chunks_exact(self.p_sample_dims).nth(assignment).unwrap();
-                *centroid_dist = self.distance_fn.distance(s, centroid);
+                *centroid_dist = self.distance_fn.distance(s, centroids.nth_stride(assignment));
             });
     }
 
@@ -250,15 +211,16 @@ where
         let k = limit_k.unwrap_or(state.k);
 
         // manually calculate work-packet size, because rayon does not do static scheduling (which is more apropriate here)
-        let work_packet_size = self.p_samples.len() / self.p_sample_dims / rayon::current_num_threads();
+        let work_packet_size = self.p_samples.bfr.len() / self.p_samples.stride / rayon::current_num_threads();
         self.p_samples
-            .par_chunks_exact(self.p_sample_dims)
+            .bfr
+            .par_chunks_exact(self.p_samples.stride)
             .with_min_len(work_packet_size)
             .zip(state.assignments.par_iter_mut())
             .zip(state.centroid_distances.par_iter_mut())
             .for_each(|((s, assignment), centroid_dist)| {
                 let (best_idx, best_dist) = centroids
-                    .chunks_exact(self.p_sample_dims)
+                    .chunks_exact_stride()
                     .take(k)
                     .map(|c| self.distance_fn.distance(s, c))
                     .enumerate()
@@ -410,7 +372,7 @@ where
     /// returns a closure that can be passed to the [`KMeans`] object.
     pub fn init_precomputed(centroids: Vec<T>) -> impl Fn(&KMeans<T, LANES, D>, &mut KMeansState<T>, &KMeansConfig<'_, T>) {
         move |kmean, state, config| {
-            crate::inits::precomputed::calculate(kmean, state, config, centroids.clone());
+            crate::inits::precomputed::calculate(kmean, state, config, &centroids);
         }
     }
 }
@@ -458,21 +420,26 @@ mod tests {
 
         let kmean = KMeans::new(samples, sample_cnt, sample_dims, EuclideanDistance);
 
-        let mut state = KMeansState::new::<LANES>(kmean.sample_cnt, kmean.p_sample_dims, k);
-        state.centroids.iter_mut().zip(kmean.p_samples.iter()).for_each(|(c, s)| *c = *s);
+        let mut state = KMeansState::new::<LANES>(kmean.sample_cnt, sample_dims, k);
+        state
+            .centroids
+            .bfr
+            .iter_mut()
+            .zip(kmean.p_samples.bfr.iter())
+            .for_each(|(c, s)| *c = *s);
 
         // calculate distances using method that (hopefully) works.
         let mut should_assignments = state.assignments.clone();
         let mut should_centroid_distances = state.centroid_distances.clone();
         kmean
             .p_samples
-            .chunks_exact(kmean.p_sample_dims)
+            .chunks_exact_stride()
             .zip(should_assignments.iter_mut())
             .zip(should_centroid_distances.iter_mut())
             .for_each(|((s, assignment), centroid_dist)| {
                 let (best_idx, best_dist) = state
                     .centroids
-                    .chunks_exact(kmean.p_sample_dims)
+                    .chunks_exact_stride()
                     .map(|c| {
                         s.iter()
                             .cloned()
@@ -528,8 +495,13 @@ mod tests {
         samples.iter_mut().for_each(|v| *v = rng.gen_range(T::zero()..T::one()));
         let kmean: KMeans<T, LANES, _> = KMeans::new(samples, sample_cnt, sample_dims, EuclideanDistance);
 
-        let mut state = KMeansState::new::<LANES>(kmean.sample_cnt, kmean.p_sample_dims, k);
-        state.centroids.iter_mut().zip(kmean.p_samples.iter()).for_each(|(c, s)| *c = *s);
+        let mut state = KMeansState::new::<LANES>(kmean.sample_cnt, sample_dims, k);
+        state
+            .centroids
+            .bfr
+            .iter_mut()
+            .zip(kmean.p_samples.bfr.iter())
+            .for_each(|(c, s)| *c = *s);
 
         b.iter(|| {
             KMeans::update_cluster_assignments(&kmean, &mut state, None);

@@ -17,7 +17,7 @@ where
     {
         // Randomly select first centroid
         let first_idx = config.rnd.borrow_mut().gen_range(0..kmean.sample_cnt);
-        state.set_centroid_from_iter(0, kmean.p_samples.iter().skip(first_idx * kmean.p_sample_dims).cloned())
+        state.centroids.set_nth_from_iter(0, kmean.p_samples[first_idx].iter().cloned());
     }
     for k in 1..state.k {
         // For each following centroid...
@@ -33,7 +33,9 @@ where
         // Use rand's WeightedIndex to randomly draw a centroid, while respecting their probabilities
         let centroid_index = WeightedIndex::new(centroid_probabilities).unwrap();
         let sampled_centroid_id = centroid_index.sample(config.rnd.borrow_mut().deref_mut());
-        state.set_centroid_from_iter(k, kmean.p_samples.iter().skip(sampled_centroid_id * kmean.p_sample_dims).cloned());
+        state
+            .centroids
+            .set_nth_from_iter(k, kmean.p_samples[sampled_centroid_id].iter().cloned());
     }
 }
 
@@ -73,7 +75,7 @@ mod tests {
         let mut samples = vec![T::zero(); sample_cnt * sample_dims];
         samples.iter_mut().for_each(|v| *v = rnd.gen_range(T::zero()..T::one()));
         let kmean: KMeans<_, LANES, _> = KMeans::new(samples, sample_cnt, sample_dims, EuclideanDistance);
-        let mut state = KMeansState::new::<LANES>(sample_cnt, kmean.p_sample_dims, k);
+        let mut state = KMeansState::new::<LANES>(sample_cnt, sample_dims, k);
         let conf = KMeansConfig::build().random_generator(rnd).build();
 
         b.iter(|| {

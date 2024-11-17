@@ -21,12 +21,13 @@ where
     });
     kmean
         .p_samples
-        .chunks_exact(kmean.p_sample_dims)
+        .chunks_exact_stride()
         .zip(assignments.iter().cloned())
         .for_each(|(sample, assignment)| {
             centroids
+                .bfr
                 .iter_mut()
-                .skip(kmean.p_sample_dims * assignment)
+                .skip(centroids.stride * assignment)
                 .zip(sample.iter().cloned())
                 .for_each(|(cv, sv)| *cv += sv / T::from(centroid_frequency[assignment]).unwrap());
         });
