@@ -110,11 +110,11 @@ where
             .zip(new_centroids.chunks_exact_stride())
             .zip(state.centroid_frequency.iter().cloned())
             .for_each(|((c, nc), cfreq)| {
-                let cfreq_simd = Simd::<T, LANES>::splat(T::from(cfreq).unwrap());
+                let cfreq_factor_simd = Simd::splat(T::one() / T::from(cfreq).unwrap());
                 c.chunks_exact_mut(LANES)
-                    .zip(nc.chunks_exact(LANES).map(|v| Simd::<T, LANES>::from_slice(v)))
+                    .zip(nc.chunks_exact(LANES).map(|v| Simd::from_slice(v)))
                     .for_each(|(c, nc)| {
-                        let nc_div_cfreq = nc / cfreq_simd;
+                        let nc_div_cfreq = nc * cfreq_factor_simd;
                         c.copy_from_slice(nc_div_cfreq.as_array());
                     });
             });
