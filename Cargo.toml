@@ -32,3 +32,10 @@ path = "examples/minibatch.rs"
 [[example]]
 name = "status_events"
 path = "examples/status_events.rs"
+
+
+[profile.profiling]
+inherits = "release"
+debug = "full"
+strip = "none"
+incremental = false
