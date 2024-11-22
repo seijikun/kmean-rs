@@ -114,8 +114,15 @@ where
     where
         for<'c> F: FnOnce(&KMeans<T, LANES, D>, &mut KMeansState<T>, &KMeansConfig<'c, T>),
     {
-        assert!(k <= data.sample_cnt);
-        assert!(batch_size <= data.sample_cnt);
+        if k > data.sample_cnt {
+            println!("KMeans: k is larger than the number of samples. Setting k to the number of samples.");
+        }
+        let k = k.min(data.sample_cnt);
+
+        if batch_size > data.sample_cnt {
+            println!("KMeans: batch_size is larger than the number of samples. Setting batch_size to the number of samples.");
+        }
+        let batch_size = batch_size.min(data.sample_cnt);
 
         // Copy and shuffle sample_data, then only take consecutive blocks (with batch_size) from there
         let (shuffle_idxs, shuffled_samples) = Self::shuffle_samples(data, config);

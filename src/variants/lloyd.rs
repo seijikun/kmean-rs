@@ -126,7 +126,10 @@ where
     where
         for<'c> F: FnOnce(&KMeans<T, LANES, D>, &mut KMeansState<T>, &KMeansConfig<'c, T>),
     {
-        assert!(k <= data.sample_cnt);
+        if k > data.sample_cnt {
+            println!("KMeans: k is larger than the number of samples. Setting k to the number of samples.");
+        }
+        let k = k.min(data.sample_cnt);
 
         let mut state = KMeansState::new::<LANES>(data.sample_cnt, data.sample_dims, k);
         state.distsum = T::infinity();
