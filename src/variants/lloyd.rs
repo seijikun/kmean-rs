@@ -178,7 +178,7 @@ mod tests {
             1.8, 4.8, 1.8, 5.4, 2.1, 5.6, 2.4, 5.1, 2.3, 5.1, 1.9, 5.9, 2.3, 5.7, 2.5, 5.2, 2.3, 5.0, 1.9, 5.2, 2.0, 5.4, 2.3, 5.1, 1.8,
         ];
 
-        let kmean: KMeans<f64, 8, _> = KMeans::new(samples, 150, 2, EuclideanDistance);
+        let kmean: KMeans<f64, 8, _> = KMeans::new(&samples, 150, 2, EuclideanDistance);
         let rnd = rand::rngs::StdRng::seed_from_u64(1);
         let conf = KMeansConfig::build().random_generator(rnd).build();
         let res = kmean.kmeans_lloyd(3, 100, KMeans::init_kmeanplusplus, &conf);
@@ -248,7 +248,7 @@ mod tests {
             1.8, 4.8, 1.8, 5.4, 2.1, 5.6, 2.4, 5.1, 2.3, 5.1, 1.9, 5.9, 2.3, 5.7, 2.5, 5.2, 2.3, 5.0, 1.9, 5.2, 2.0, 5.4, 2.3, 5.1, 1.8,
         ];
 
-        let kmean: KMeans<f32, 8, _> = KMeans::new(samples, 150, 2, EuclideanDistance);
+        let kmean: KMeans<f32, 8, _> = KMeans::new(&samples, 150, 2, EuclideanDistance);
         let rnd = rand::rngs::StdRng::seed_from_u64(1);
         let conf = KMeansConfig::build().random_generator(rnd).build();
         let res = kmean.kmeans_lloyd(3, 100, KMeans::init_kmeanplusplus, &conf);
@@ -292,7 +292,7 @@ mod tests {
         let samples = vec![1.0, 0.0, 2.0, 0.0, 3.0, 0.0];
         let initial_centroids = [2.0, 0.0, 1337.0, 0.0];
 
-        let kmean = KMeans::new(samples, 3, 2, EuclideanDistance);
+        let kmean = KMeans::new(&samples, 3, 2, EuclideanDistance);
         let rnd = rand::rngs::StdRng::seed_from_u64(1);
         let conf = KMeansConfig::build().random_generator(rnd).build();
 

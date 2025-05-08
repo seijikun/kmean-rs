@@ -27,7 +27,7 @@ mod tests {
         let centroids = vec![0.0, 10.0, 20.0];
         let (sample_cnt, sample_dims) = (samples.len(), 1);
 
-        let kmean: KMeans<f32, 8, _> = KMeans::new(samples, sample_cnt, sample_dims, EuclideanDistance);
+        let kmean: KMeans<f32, 8, _> = KMeans::new(&samples, sample_cnt, sample_dims, EuclideanDistance);
         let result = kmean.kmeans_lloyd(3, 200, KMeans::init_precomputed(centroids), &KMeansConfig::default());
 
         assert_eq!(result.centroids.to_vec(), vec![0.5, 10.5, 20.5]);
