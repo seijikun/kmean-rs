@@ -179,13 +179,13 @@ where
     /// - **sample_cnt**: Amount of samples, contained in the passed **samples** vector
     /// - **sample_dims**: Amount of dimensions each sample from the **sample** vector has
     /// - **distance_fn**: Distance function to use for the calculation
-    pub fn new(samples: Vec<T>, sample_cnt: usize, sample_dims: usize, distance_fn: D) -> Self {
+    pub fn new(samples: &Vec<T>, sample_cnt: usize, sample_dims: usize, distance_fn: D) -> Self {
         assert!(samples.len() == sample_cnt * sample_dims);
 
         Self {
             sample_cnt,
             sample_dims,
-            p_samples: StrideBuffer::from_slice::<LANES>(sample_dims, &samples),
+            p_samples: StrideBuffer::from_slice::<LANES>(sample_dims, samples),
             distance_fn,
         }
     }
@@ -267,7 +267,7 @@ where
     ///
     /// // Calculate kmeans, using kmean++ as initialization-method
     /// // KMeans<_, 8> specifies to use f64 SIMD vectors with 8 lanes (e.g. AVX512)
-    /// let kmean: KMeans<_, 8, _> = KMeans::new(samples, sample_cnt, sample_dims, EuclideanDistance);
+    /// let kmean: KMeans<_, 8, _> = KMeans::new(&samples, sample_cnt, sample_dims, EuclideanDistance);
     /// let result = kmean.kmeans_lloyd(k, max_iter, KMeans::init_kmeanplusplus, &KMeansConfig::default());
     ///
     /// println!("Centroids: {:?}", result.centroids);
@@ -306,7 +306,7 @@ where
     ///
     /// // Calculate kmeans, using kmean++ as initialization-method
     /// // KMeans<_, 8> specifies to use f64 SIMD vectors with 8 lanes (e.g. AVX512)
-    /// let kmean: KMeans<_, 8, _> = KMeans::new(samples, sample_cnt, sample_dims, EuclideanDistance);
+    /// let kmean: KMeans<_, 8, _> = KMeans::new(&samples, sample_cnt, sample_dims, EuclideanDistance);
     /// let result = kmean.kmeans_minibatch(4, k, max_iter, KMeans::init_random_sample, &KMeansConfig::default());
     ///
     /// println!("Centroids: {:?}", result.centroids);
@@ -418,7 +418,7 @@ mod tests {
         let mut rng = rand::rngs::StdRng::seed_from_u64(1337);
         samples.iter_mut().for_each(|i| *i = rng.gen_range(T::zero()..T::one()));
 
-        let kmean = KMeans::new(samples, sample_cnt, sample_dims, EuclideanDistance);
+        let kmean = KMeans::new(&samples, sample_cnt, sample_dims, EuclideanDistance);
 
         let mut state = KMeansState::new::<LANES>(kmean.sample_cnt, sample_dims, k);
         state
@@ -493,7 +493,7 @@ mod tests {
         let mut samples = vec![T::zero(); sample_cnt * sample_dims];
         let mut rng = rand::rngs::StdRng::seed_from_u64(1337);
         samples.iter_mut().for_each(|v| *v = rng.gen_range(T::zero()..T::one()));
-        let kmean: KMeans<T, LANES, _> = KMeans::new(samples, sample_cnt, sample_dims, EuclideanDistance);
+        let kmean: KMeans<T, LANES, _> = KMeans::new(&samples, sample_cnt, sample_dims, EuclideanDistance);
 
         let mut state = KMeansState::new::<LANES>(kmean.sample_cnt, sample_dims, k);
         state
