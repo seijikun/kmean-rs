@@ -4,6 +4,7 @@ version = "2.0.0"
 authors = ["Markus Ebner <hiwatari.seiji@gmail.com>"]
 edition = "2021"
 description = "Small and fast library for k-means clustering calculations."
+documentation = "https://docs.rs/kmeans/"
 repository = "https://github.com/seijikun/kmean-rs"
 readme = "README.md"
 license = "Apache-2.0"
@@ -21,19 +22,6 @@ aligned-vec = "0.6"
 [lib]
 name = "kmeans"
 path = "src/lib.rs"
-
-[[example]]
-name = "lloyd"
-path = "examples/lloyd.rs"
-
-[[example]]
-name = "minibatch"
-path = "examples/minibatch.rs"
-
-[[example]]
-name = "status_events"
-path = "examples/status_events.rs"
-
 
 [profile.profiling]
 inherits = "release"
