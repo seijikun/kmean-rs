@@ -175,11 +175,11 @@ where
     /// Create a new instance of the [`KMeans`] structure.
     ///
     /// ## Arguments
-    /// - **samples**: Vector of samples [row-major] = [<sample0>,<sample1>,<sample2>,...]
+    /// - **samples**: Slice of samples [row-major] = [<sample0>,<sample1>,<sample2>,...]
     /// - **sample_cnt**: Amount of samples, contained in the passed **samples** vector
     /// - **sample_dims**: Amount of dimensions each sample from the **sample** vector has
     /// - **distance_fn**: Distance function to use for the calculation
-    pub fn new(samples: &Vec<T>, sample_cnt: usize, sample_dims: usize, distance_fn: D) -> Self {
+    pub fn new(samples: &[T], sample_cnt: usize, sample_dims: usize, distance_fn: D) -> Self {
         assert!(samples.len() == sample_cnt * sample_dims);
 
         Self {
