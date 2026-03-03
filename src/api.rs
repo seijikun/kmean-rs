@@ -1,6 +1,6 @@
 use crate::memory::*;
 use crate::AbortStrategy;
-use core::simd::{LaneCount, Simd, SupportedLaneCount};
+use core::simd::Simd;
 use rand::prelude::*;
 use rayon::prelude::*;
 use std::cell::RefCell;
@@ -158,7 +158,6 @@ pub trait DistanceFunction<T, const LANES: usize>: Send + Sync {
 pub struct KMeans<T, const LANES: usize, D: DistanceFunction<T, LANES>>
 where
     T: Primitive,
-    LaneCount<LANES>: SupportedLaneCount,
     Simd<T, LANES>: SupportedSimdArray<T, LANES>,
 {
     pub(crate) sample_cnt: usize,
@@ -169,7 +168,6 @@ where
 impl<T, const LANES: usize, D: DistanceFunction<T, LANES>> KMeans<T, LANES, D>
 where
     T: Primitive,
-    LaneCount<LANES>: SupportedLaneCount,
     Simd<T, LANES>: SupportedSimdArray<T, LANES>,
 {
     /// Create a new instance of the [`KMeans`] structure.
@@ -317,7 +315,6 @@ where
     where
         for<'c> F: FnOnce(&KMeans<T, LANES, D>, &mut KMeansState<T>, &KMeansConfig<'c, T>),
         T: Primitive,
-        LaneCount<LANES>: SupportedLaneCount,
         Simd<T, LANES>: SupportedSimdArray<T, LANES>,
     {
         crate::variants::Minibatch::calculate(self, batch_size, k, max_iter, init, config)
@@ -408,7 +405,6 @@ mod tests {
     fn calculate_cluster_assignments<T, const LANES: usize>(sample_dims: usize, max_diff: T)
     where
         T: Primitive,
-        LaneCount<LANES>: SupportedLaneCount,
         Simd<T, LANES>: SupportedSimdArray<T, LANES>,
     {
         let sample_cnt = 1000;
@@ -483,7 +479,6 @@ mod tests {
     fn distance_matrix_calculation_benchmark<T, const LANES: usize>(b: &mut Bencher)
     where
         T: Primitive,
-        LaneCount<LANES>: SupportedLaneCount,
         Simd<T, LANES>: SupportedSimdArray<T, LANES>,
     {
         let sample_cnt = 20000;

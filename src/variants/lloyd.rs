@@ -1,12 +1,11 @@
 use crate::api::DistanceFunction;
 use crate::memory::*;
 use crate::{KMeans, KMeansConfig, KMeansState};
-use std::simd::{LaneCount, Simd, SupportedLaneCount};
+use std::simd::Simd;
 
 pub(crate) struct Lloyd<T, const LANES: usize, D>
 where
     T: Primitive,
-    LaneCount<LANES>: SupportedLaneCount,
     D: DistanceFunction<T, LANES>,
 {
     _p: std::marker::PhantomData<(T, D)>,
@@ -15,7 +14,6 @@ where
 impl<T, const LANES: usize, D> Lloyd<T, LANES, D>
 where
     T: Primitive,
-    LaneCount<LANES>: SupportedLaneCount,
     Simd<T, LANES>: SupportedSimdArray<T, LANES>,
     D: DistanceFunction<T, LANES>,
 {

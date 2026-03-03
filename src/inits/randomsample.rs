@@ -3,13 +3,12 @@ use crate::memory::*;
 use crate::{KMeans, KMeansConfig, KMeansState};
 use rand::prelude::*;
 use std::ops::DerefMut;
-use std::simd::{LaneCount, Simd, SupportedLaneCount};
+use std::simd::Simd;
 
 #[inline(always)]
 pub fn calculate<T, const LANES: usize, D>(kmean: &KMeans<T, LANES, D>, state: &mut KMeansState<T>, config: &KMeansConfig<'_, T>)
 where
     T: Primitive,
-    LaneCount<LANES>: SupportedLaneCount,
     Simd<T, LANES>: SupportedSimdArray<T, LANES>,
     D: DistanceFunction<T, LANES>,
 {

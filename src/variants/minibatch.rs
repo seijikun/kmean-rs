@@ -4,7 +4,7 @@ use crate::{KMeans, KMeansConfig, KMeansState};
 use rand::prelude::*;
 use rayon::prelude::*;
 use std::ops::{DerefMut, Range};
-use std::simd::{LaneCount, Simd, SupportedLaneCount};
+use std::simd::Simd;
 
 struct BatchInfo {
     start_idx: usize,
@@ -22,7 +22,6 @@ impl BatchInfo {
 pub(crate) struct Minibatch<T, const LANES: usize, D>
 where
     T: Primitive,
-    LaneCount<LANES>: SupportedLaneCount,
     D: DistanceFunction<T, LANES>,
 {
     _p: std::marker::PhantomData<(T, D)>,
@@ -31,7 +30,6 @@ where
 impl<T, const LANES: usize, D> Minibatch<T, LANES, D>
 where
     T: Primitive,
-    LaneCount<LANES>: SupportedLaneCount,
     Simd<T, LANES>: SupportedSimdArray<T, LANES>,
     D: DistanceFunction<T, LANES>,
 {

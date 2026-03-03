@@ -1,13 +1,12 @@
 use crate::memory::SupportedSimdArray;
 use crate::{DistanceFunction, Primitive};
-use std::simd::{LaneCount, Simd, SupportedLaneCount};
+use std::simd::Simd;
 
 pub struct HistogramDistance;
 
 impl<T, const LANES: usize> DistanceFunction<T, LANES> for HistogramDistance
 where
     T: Primitive,
-    LaneCount<LANES>: SupportedLaneCount,
     Simd<T, LANES>: SupportedSimdArray<T, LANES>,
 {
     #[inline(always)]

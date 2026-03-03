@@ -113,7 +113,7 @@ mod tests {
     use distances::EuclideanDistance;
     use memory::SupportedSimdArray;
     use rand::prelude::*;
-    use std::simd::{LaneCount, Simd, SupportedLaneCount};
+    use std::simd::Simd;
     use test::Bencher;
 
     #[bench]
@@ -138,7 +138,6 @@ mod tests {
         b: &mut Bencher, sample_cnt: usize, sample_dims: usize, max_iter: usize, k: usize,
     ) where
         T: Primitive,
-        LaneCount<LANES>: SupportedLaneCount,
         Simd<T, LANES>: SupportedSimdArray<T, LANES>,
     {
         let mut rnd = rand::rngs::StdRng::seed_from_u64(1337);
@@ -170,7 +169,6 @@ mod tests {
         b: &mut Bencher, batch_size: usize, sample_cnt: usize, sample_dims: usize, max_iter: usize, k: usize,
     ) where
         T: Primitive,
-        LaneCount<LANES>: SupportedLaneCount,
         Simd<T, LANES>: SupportedSimdArray<T, LANES>,
     {
         let mut rnd = rand::rngs::StdRng::seed_from_u64(1337);

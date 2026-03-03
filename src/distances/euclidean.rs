@@ -1,14 +1,13 @@
 use crate::memory::SupportedSimdArray;
 use crate::{DistanceFunction, Primitive};
 use std::simd::num::SimdFloat;
-use std::simd::{LaneCount, Simd, SupportedLaneCount};
+use std::simd::Simd;
 
 pub struct EuclideanDistance;
 
 impl<T, const LANES: usize> DistanceFunction<T, LANES> for EuclideanDistance
 where
     T: Primitive,
-    LaneCount<LANES>: SupportedLaneCount,
     Simd<T, LANES>: SupportedSimdArray<T, LANES>,
 {
     #[inline(always)]
